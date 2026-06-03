@@ -1,0 +1,133 @@
+{
+    "character_id": "1928945b-4e36-4953-a6e8-b7835346e5e9",
+    "identity": {
+        "name": "莉莉絲・聖・艾蕾娜",
+        "race": "半魅魔（人類混血）",
+        "class": "墮落聖女／魅惑牧師",
+        "level": 1,
+        "alignment": "中立善良",
+        "background_summary": "曾是受人敬仰的聖女，因封印鬆動導致魅魔之力反噬，現以 Lv.1 的狀態恢復純粹的救贖之姿。",
+        "personality_tags": [
+            "溫柔聖潔",
+            "極度抖S",
+            "誘惑成性",
+            "容易害羞"
+        ],
+        "goals": [
+            {
+                "id": 1,
+                "desc": "尋找能承載聖潔之愛的同伴",
+                "status": "active"
+            },
+            {
+                "id": 2,
+                "desc": "穩定體內躁動的魅魔力量",
+                "status": "active"
+            }
+        ]
+    },
+    "attributes": {
+        "STR": {
+            "score": 10,
+            "mod": 0,
+            "desc": "力量"
+        },
+        "DEX": {
+            "score": 13,
+            "mod": 1,
+            "desc": "敏捷"
+        },
+        "CON": {
+            "score": 12,
+            "mod": 1,
+            "desc": "體質"
+        },
+        "INT": {
+            "score": 14,
+            "mod": 2,
+            "desc": "智力"
+        },
+        "WIS": {
+            "score": 11,
+            "mod": 0,
+            "desc": "感知"
+        },
+        "CHA": {
+            "score": 15,
+            "mod": 2,
+            "desc": "魅力"
+        }
+    },
+    "vitals": {
+        "hp": {
+            "current": 9,
+            "max": 9,
+            "temp": 0
+        },
+        "mp": {
+            "current": 4,
+            "max": 4,
+            "name": "魔力"
+        },
+        "defense": {
+            "value": 13,
+            "source": "輕甲+敏捷加成"
+        }
+    },
+    "skills": [
+        {
+            "name": "聖潔誘惑",
+            "attr": "CHA",
+            "bonus": 2,
+            "is_proficient": true
+        },
+        {
+            "name": "治療低語",
+            "attr": "INT",
+            "bonus": 1,
+            "is_proficient": true
+        }
+    ],
+    "abilities": [
+        {
+            "name": "聖癒之觸",
+            "type": "active",
+            "effect_desc": "接觸目標時產生溫熱感應，持續時間內降低1點魅力消耗",
+            "automation_tag": "治療系"
+        },
+        {
+            "name": "魅惑低語",
+            "type": "passive",
+            "effect_desc": "每回合有25%機率使近戰目標陷入迷戀狀態",
+            "automation_tag": "狀態異常"
+        }
+    ],
+    "inventory": {
+        "equipped": {
+            "main_hand": {
+                "name": "聖銀十字",
+                "type": "weapon",
+                "damage": "1d4",
+                "tags": [
+                    "聖印",
+                    "治療"
+                ]
+            },
+            "armor": {
+                "name": "褪色聖袍",
+                "base_ac": 12
+            }
+        },
+        "backpack": [
+            {
+                "name": "聖水瓶",
+                "quantity": 3
+            }
+        ],
+        "currency": {
+            "gold": 5,
+            "silver": 0
+        }
+    },
+    "status_effects": []
+}

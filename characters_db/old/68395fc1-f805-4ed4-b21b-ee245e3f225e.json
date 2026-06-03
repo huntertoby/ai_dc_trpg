@@ -1,0 +1,120 @@
+{
+    "character_id": "68395fc1-f805-4ed4-b21b-ee245e3f225e",
+    "identity": {
+        "name": "飛鼠",
+        "race": "未知存在",
+        "class": "封印使徒",
+        "level": 1,
+        "alignment": "中立",
+        "background_summary": "因力量失控被封印，以幼年形态降臨現世",
+        "personality_tags": [
+            "無上尊貴",
+            "沉穩內斂",
+            "力量不穩定"
+        ],
+        "goals": [
+            {
+                "id": 1,
+                "desc": "恢復完整力量體系",
+                "status": "active"
+            }
+        ]
+    },
+    "attributes": {
+        "STR": {
+            "score": 12,
+            "mod": 1,
+            "desc": "力量"
+        },
+        "DEX": {
+            "score": 10,
+            "mod": 0,
+            "desc": "敏捷"
+        },
+        "CON": {
+            "score": 8,
+            "mod": -1,
+            "desc": "體質"
+        },
+        "INT": {
+            "score": 14,
+            "mod": 2,
+            "desc": "智力"
+        },
+        "WIS": {
+            "score": 12,
+            "mod": 1,
+            "desc": "感知"
+        },
+        "CHA": {
+            "score": 9,
+            "mod": 0,
+            "desc": "魅力"
+        }
+    },
+    "vitals": {
+        "hp": {
+            "current": 7,
+            "max": 7,
+            "temp": 0
+        },
+        "mp": {
+            "current": 4,
+            "max": 4,
+            "name": "法力"
+        },
+        "defense": {
+            "value": 10,
+            "source": "基礎防禦"
+        }
+    },
+    "skills": [
+        {
+            "name": "元素詠唱",
+            "attr": "INT",
+            "bonus": 3,
+            "is_proficient": true
+        },
+        {
+            "name": "靈魂連結",
+            "attr": "WIS",
+            "bonus": 2,
+            "is_proficient": true
+        }
+    ],
+    "abilities": [
+        {
+            "name": "永恆之殼",
+            "type": "passive",
+            "effect_desc": "每次生命值歸零時重置為最大值，無法以任何方式額外增加最大生命值",
+            "automation_tag": "生命重置"
+        }
+    ],
+    "inventory": {
+        "equipped": {
+            "main_hand": {
+                "name": "原始法杖",
+                "type": "weapon",
+                "damage": "1d4",
+                "tags": [
+                    "法術導向"
+                ]
+            },
+            "armor": {
+                "name": "無",
+                "base_ac": 0
+            }
+        },
+        "backpack": [
+            {
+                "name": "基礎魔藥",
+                "quantity": 3
+            }
+        ],
+        "currency": {
+            "gold": 0,
+            "silver": 5
+        }
+    },
+    "status_effects": []
+}

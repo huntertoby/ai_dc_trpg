@@ -1,0 +1,312 @@
+[
+    {
+        "id": "Q-1780473381-0",
+        "title": "東邊森林的史萊姆暴走事件",
+        "description": "最近東邊的森林出現異常，數量激增的史萊姆開始破壞農田。請幫忙清除這批躁動的史萊姆！",
+        "rank_required": "E",
+        "level_required": 1,
+        "objectives": [
+            {
+                "type": "kill",
+                "target_id": "史萊姆",
+                "count": 8,
+                "current_count": 0,
+                "location": [
+                    1,
+                    0
+                ]
+            }
+        ],
+        "rewards": {
+            "gold": 100,
+            "exp": 200,
+            "reputation": 7
+        },
+        "is_global": false,
+        "slots_left": 999,
+        "deadline": null
+    },
+    {
+        "id": "Q-1780473381-1",
+        "title": "河畔狼群的威脅",
+        "description": "靠近河邊的村落報告野狼出沒，甚至有村民被咬傷。請前往調查並擊退狼群首領。",
+        "rank_required": "D",
+        "level_required": 1,
+        "objectives": [
+            {
+                "type": "kill",
+                "target_id": "巨狼",
+                "count": 5,
+                "current_count": 0,
+                "location": [
+                    -1,
+                    2
+                ]
+            },
+            {
+                "type": "collect",
+                "target_id": "狼牙",
+                "count": 3,
+                "current_count": 0,
+                "location": [
+                    -1,
+                    2
+                ]
+            }
+        ],
+        "rewards": {
+            "gold": 350,
+            "exp": 750,
+            "reputation": 22
+        },
+        "is_global": false,
+        "slots_left": 999,
+        "deadline": null
+    },
+    {
+        "id": "Q-1780473381-2",
+        "title": "西丘洞穴的哥布林巢穴",
+        "description": "探險隊在西丘發現了哥布林的巢穴，並回報有大量黃金藏匿其中。請前往探索該洞穴！",
+        "rank_required": "D",
+        "level_required": 1,
+        "objectives": [
+            {
+                "type": "explore",
+                "target_id": "哥布林巢穴",
+                "count": 1,
+                "current_count": 0,
+                "location": [
+                    -2,
+                    -1
+                ]
+            }
+        ],
+        "rewards": {
+            "gold": 350,
+            "exp": 750,
+            "reputation": 22
+        },
+        "is_global": false,
+        "slots_left": 999,
+        "deadline": null
+    },
+    {
+        "id": "Q-1780473381-3",
+        "title": "藥草師委託：稀有蘑菇採集",
+        "description": "鎮上的藥草師需要幾種在丘頂生長的特殊蘑菇來調製新藥。請協助採集！",
+        "rank_required": "E",
+        "level_required": 1,
+        "objectives": [
+            {
+                "type": "collect",
+                "target_id": "月光菇",
+                "count": 6,
+                "current_count": 0,
+                "location": [
+                    2,
+                    1
+                ]
+            }
+        ],
+        "rewards": {
+            "gold": 100,
+            "exp": 200,
+            "reputation": 7
+        },
+        "is_global": false,
+        "slots_left": 999,
+        "deadline": null
+    },
+    {
+        "id": "Q-1780473381-4",
+        "title": "西邊古井的異變",
+        "description": "鎮西方的一座古老水井最近湧出黑水，井底似乎有東西在甦醒。請調查並解決問題！",
+        "rank_required": "C",
+        "level_required": 1,
+        "objectives": [
+            {
+                "type": "explore",
+                "target_id": "古井深處",
+                "count": 1,
+                "current_count": 0,
+                "location": [
+                    -3,
+                    -2
+                ]
+            }
+        ],
+        "rewards": {
+            "gold": 1050,
+            "exp": 1850,
+            "reputation": 60
+        },
+        "is_global": false,
+        "slots_left": 999,
+        "deadline": null
+    },
+    {
+        "id": "Q-1780473381-5",
+        "title": "北方洞穴的史前巨蛇",
+        "description": "北方洞穴中出現了一條巨大的古代蛇類，它的毒液具有極高的藥用價值。請前往討伐並取得蛇膽！",
+        "rank_required": "C",
+        "level_required": 1,
+        "objectives": [
+            {
+                "type": "kill",
+                "target_id": "史前巨蛇",
+                "count": 1,
+                "current_count": 0,
+                "location": [
+                    0,
+                    3
+                ]
+            },
+            {
+                "type": "collect",
+                "target_id": "蛇膽",
+                "count": 1,
+                "current_count": 0,
+                "location": [
+                    0,
+                    3
+                ]
+            }
+        ],
+        "rewards": {
+            "gold": 1050,
+            "exp": 1850,
+            "reputation": 60
+        },
+        "is_global": false,
+        "slots_left": 999,
+        "deadline": null
+    },
+    {
+        "id": "Q-1780473381-6",
+        "title": "鎮下鼠患危機",
+        "description": "倉庫的糧食被老鼠群啃噬殆盡，請前往地下通道驅除害鼠！",
+        "rank_required": "E",
+        "level_required": 1,
+        "objectives": [
+            {
+                "type": "kill",
+                "target_id": "巨鼠",
+                "count": 12,
+                "current_count": 0,
+                "location": [
+                    1,
+                    -2
+                ]
+            }
+        ],
+        "rewards": {
+            "gold": 100,
+            "exp": 200,
+            "reputation": 7
+        },
+        "is_global": false,
+        "slots_left": 999,
+        "deadline": null
+    },
+    {
+        "id": "Q-1780473381-7",
+        "title": "沼澤地的巨大蜘蛛巢穴",
+        "description": "南方沼澤地出現了一個巨大的蜘蛛巢，蜘蛛網蔓延到周圍的村落。請前往消滅蜘蛛女王！",
+        "rank_required": "C",
+        "level_required": 1,
+        "objectives": [
+            {
+                "type": "kill",
+                "target_id": "蜘蛛女王",
+                "count": 1,
+                "current_count": 0,
+                "location": [
+                    -2,
+                    -3
+                ]
+            },
+            {
+                "type": "collect",
+                "target_id": "蛛絲囊",
+                "count": 5,
+                "current_count": 0,
+                "location": [
+                    -2,
+                    -3
+                ]
+            }
+        ],
+        "rewards": {
+            "gold": 1050,
+            "exp": 1850,
+            "reputation": 60
+        },
+        "is_global": false,
+        "slots_left": 999,
+        "deadline": null
+    },
+    {
+        "id": "Q-1780473381-8",
+        "title": "東邊森林的迷霧",
+        "description": "東邊森林突然瀰漫濃霧，迷失在其中的旅人不斷出現。請進入森林查明原因！",
+        "rank_required": "D",
+        "level_required": 1,
+        "objectives": [
+            {
+                "type": "explore",
+                "target_id": "迷霧森林深處",
+                "count": 1,
+                "current_count": 0,
+                "location": [
+                    3,
+                    0
+                ]
+            }
+        ],
+        "rewards": {
+            "gold": 350,
+            "exp": 750,
+            "reputation": 22
+        },
+        "is_global": false,
+        "slots_left": 999,
+        "deadline": null
+    },
+    {
+        "id": "Q-1780473381-9",
+        "title": "古代遺蹟的探索",
+        "description": "探險家們在南方的丘陵發現了一座古代遺蹟，傳說中藏有寶物。請組隊前往探索！",
+        "rank_required": "C",
+        "level_required": 1,
+        "objectives": [
+            {
+                "type": "explore",
+                "target_id": "古代遺蹟核心",
+                "count": 1,
+                "current_count": 0,
+                "location": [
+                    2,
+                    -2
+                ]
+            },
+            {
+                "type": "collect",
+                "target_id": "古幣",
+                "count": 3,
+                "current_count": 0,
+                "location": [
+                    2,
+                    -2
+                ]
+            }
+        ],
+        "rewards": {
+            "gold": 1050,
+            "exp": 1850,
+            "reputation": 60
+        },
+        "is_global": false,
+        "slots_left": 999,
+        "deadline": null
+    }
+]

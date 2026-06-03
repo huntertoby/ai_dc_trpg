@@ -1,0 +1,185 @@
+{
+    "character_id": "641989a8-465e-4c8d-9336-f2f8837c0d43",
+    "identity": {
+        "name": "埃里奥斯",
+        "race": "人类",
+        "class": "法师",
+        "level": 1,
+        "alignment": "Neutral Good",
+        "background_summary": "年轻魔法学徒，专精于操控暗影与雷电的交织之力，尚未完全掌握其潜在的暴烈本质。",
+        "appearance": {
+            "height": "180cm",
+            "weight": "60kg",
+            "distinguishing_marks": "左眼呈灰蓝色，发梢常有静电噼啪闪烁"
+        },
+        "languages": [
+            "通用语",
+            "精灵语"
+        ]
+    },
+    "rp_traits": {
+        "ideals": "相信魔法是连接世界本质的丝线",
+        "bonds": "与一座废弃的雷电祭坛有神秘共鸣",
+        "flaws": "过度专注时会忽略周围环境变化",
+        "fears": [
+            "雷鸣骤响的瞬间"
+        ]
+    },
+    "attributes": {
+        "STR": {
+            "score": 10,
+            "mod": 0,
+            "desc": "力量"
+        },
+        "DEX": {
+            "score": 12,
+            "mod": 1,
+            "desc": "敏捷"
+        },
+        "CON": {
+            "score": 12,
+            "mod": 1,
+            "desc": "体质"
+        },
+        "INT": {
+            "score": 14,
+            "mod": 2,
+            "desc": "智力"
+        },
+        "WIS": {
+            "score": 10,
+            "mod": 0,
+            "desc": "感知"
+        },
+        "CHA": {
+            "score": 8,
+            "mod": -1,
+            "desc": "魅力"
+        }
+    },
+    "vitals": {
+        "hp": {
+            "current": 9,
+            "max": 9,
+            "temp": 0,
+            "formula": "8 + CON.mod"
+        },
+        "mp": {
+            "current": 5,
+            "max": 5,
+            "name": "Mana"
+        },
+        "defense": {
+            "value": 13,
+            "source": "Leather Armor + DEX"
+        }
+    },
+    "resource_pools": {
+        "sanity": {
+            "current": 85,
+            "max": 100,
+            "thresholds": {
+                "temp_madness": 50
+            }
+        },
+        "stamina": {
+            "current": 3,
+            "max": 3,
+            "desc": "Action Points"
+        },
+        "inspiration": {
+            "value": 1,
+            "max": 3
+        }
+    },
+    "tactical": {
+        "speed": {
+            "walk": 30,
+            "fly": 0,
+            "swim": 0
+        },
+        "senses": [
+            {
+                "name": "Normal Vision",
+                "range": 60
+            }
+        ],
+        "resistances": [
+            "Lightning"
+        ],
+        "vulnerabilities": [
+            "Fire"
+        ]
+    },
+    "social_relations": [
+        {
+            "faction_name": "奥术议会",
+            "standing": "Friendly",
+            "reputation_score": 15
+        }
+    ],
+    "skills": [
+        {
+            "name": "Arcana",
+            "attr": "INT",
+            "bonus": 4,
+            "is_proficient": true
+        },
+        {
+            "name": "History",
+            "attr": "INT",
+            "bonus": 2,
+            "is_proficient": false
+        },
+        {
+            "name": "Religion",
+            "attr": "WIS",
+            "bonus": 0,
+            "is_proficient": false
+        }
+    ],
+    "abilities": [
+        {
+            "name": "Shadow Bolt",
+            "type": "active",
+            "effect_desc": "投掷一团暗影能量，造成1d6+1点力场伤害",
+            "automation_tag": "attack_roll"
+        },
+        {
+            "name": "Thunder Step",
+            "type": "passive",
+            "effect_desc": "移动时可能引发小型雷电脉冲",
+            "automation_tag": "environmental"
+        }
+    ],
+    "inventory": {
+        "equipped": {
+            "main_hand": {
+                "name": "橡木法杖",
+                "type": "weapon",
+                "damage": "1d4+0",
+                "tags": [
+                    "arcane"
+                ]
+            }
+        },
+        "armor": {
+            "name": "粗麻长袍",
+            "base_ac": 11
+        }
+    },
+    "backpack": [
+        {
+            "name": "魔法墨水",
+            "quantity": 3
+        },
+        {
+            "name": "龙鳞碎片",
+            "quantity": 5
+        }
+    ],
+    "currency": {
+        "gold": 5,
+        "silver": 10
+    }
+}

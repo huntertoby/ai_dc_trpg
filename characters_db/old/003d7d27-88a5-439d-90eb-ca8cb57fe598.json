@@ -1,0 +1,113 @@
+{
+    "character_id": "003d7d27-88a5-439d-90eb-ca8cb57fe598",
+    "identity": {
+        "name": "無上至尊",
+        "race": "未知",
+        "class": "永恆守護者",
+        "level": 1,
+        "alignment": "中立",
+        "background_summary": "曾經統御萬界的無上存在，因封印之力被限制為初階形态。",
+        "personality_tags": [
+            "永恆",
+            "莊嚴"
+        ],
+        "goals": [
+            {
+                "id": 1,
+                "desc": "解開永恆封印",
+                "status": "active"
+            }
+        ]
+    },
+    "attributes": {
+        "STR": {
+            "score": 12,
+            "mod": 1,
+            "desc": "力量"
+        },
+        "DEX": {
+            "score": 10,
+            "mod": 0,
+            "desc": "敏捷"
+        },
+        "CON": {
+            "score": 12,
+            "mod": 1,
+            "desc": "體質"
+        },
+        "INT": {
+            "score": 10,
+            "mod": 0,
+            "desc": "智力"
+        },
+        "WIS": {
+            "score": 10,
+            "mod": 0,
+            "desc": "感知"
+        },
+        "CHA": {
+            "score": 11,
+            "mod": 0,
+            "desc": "魅力"
+        }
+    },
+    "vitals": {
+        "hp": {
+            "current": 9,
+            "max": 9,
+            "temp": 0
+        },
+        "mp": {
+            "current": 2,
+            "max": 2,
+            "name": "魔法值"
+        },
+        "defense": {
+            "value": 12,
+            "source": "輕甲+敏捷"
+        }
+    },
+    "skills": [
+        {
+            "name": "基礎戰技",
+            "attr": "STR",
+            "bonus": 2,
+            "is_proficient": true
+        }
+    ],
+    "abilities": [
+        {
+            "name": "永恆之殼",
+            "type": "passive",
+            "effect_desc": "當生命值歸零時，會重置為最大值",
+            "automation_tag": "生命守護"
+        }
+    ],
+    "inventory": {
+        "equipped": {
+            "main_hand": {
+                "name": "簡易長劍",
+                "type": "weapon",
+                "damage": "1d6",
+                "tags": [
+                    "基礎"
+                ]
+            },
+            "armor": {
+                "name": "麻布鎧",
+                "base_ac": 2
+            }
+        },
+        "backpack": [
+            {
+                "name": "粗糧餅乾",
+                "quantity": 5
+            }
+        ],
+        "currency": {
+            "gold": 0,
+            "silver": 10
+        }
+    },
+    "status_effects": []
+}

@@ -1,0 +1,120 @@
+{
+    "character_id": "9c25c39a-d05a-49c3-ba0e-1cb20003769b",
+    "identity": {
+        "name": "永恒之壳",
+        "race": "未知",
+        "class": "永生者",
+        "level": 1,
+        "alignment": "中立",
+        "background_summary": "被封印的古老存在，因力量失控導致生命體征微弱，現以幼年形态降臨現世。",
+        "personality_tags": [
+            "不屈",
+            "沉穩",
+            "神秘"
+        ],
+        "goals": [
+            {
+                "id": 1,
+                "desc": "探索自身力量的來源",
+                "status": "active"
+            }
+        ]
+    },
+    "attributes": {
+        "STR": {
+            "score": 12,
+            "mod": 1,
+            "desc": "力量"
+        },
+        "DEX": {
+            "score": 14,
+            "mod": 2,
+            "desc": "敏捷"
+        },
+        "CON": {
+            "score": 8,
+            "mod": -1,
+            "desc": "體質"
+        },
+        "INT": {
+            "score": 16,
+            "mod": 3,
+            "desc": "智力"
+        },
+        "WIS": {
+            "score": 10,
+            "mod": 0,
+            "desc": "感知"
+        },
+        "CHA": {
+            "score": 9,
+            "mod": 0,
+            "desc": "魅力"
+        }
+    },
+    "vitals": {
+        "hp": {
+            "current": 7,
+            "max": 9,
+            "temp": 0
+        },
+        "mp": {
+            "current": 2,
+            "max": 5,
+            "name": "法力"
+        },
+        "defense": {
+            "value": 14,
+            "source": "輕甲 + 敏捷加成"
+        }
+    },
+    "skills": [
+        {
+            "name": "元素詠唱",
+            "attr": "INT",
+            "bonus": 3,
+            "is_proficient": true
+        },
+        {
+            "name": "靈魂連結",
+            "attr": "WIS",
+            "bonus": 2,
+            "is_proficient": false
+        }
+    ],
+    "abilities": [
+        {
+            "name": "永恆之殼",
+            "type": "passive",
+            "effect_desc": "當生命值歸零時，30秒內恢復至最大值但無法行動",
+            "automation_tag": "生命守護"
+        }
+    ],
+    "inventory": {
+        "equipped": {
+            "main_hand": {
+                "name": "殘破法杖",
+                "type": "weapon",
+                "damage": "1d4",
+                "tags": [
+                    "魔法"
+                ]
+            },
+            "armor": {
+                "name": "破損斗篷",
+                "base_ac": 2
+            }
+        },
+        "backpack": [
+            {
+                "name": "魔法石",
+                "quantity": 3
+            }
+        ],
+        "currency": {
+            "gold": 5,
+            "silver": 10
+        }
+    },
+    "status_effects": []
+}

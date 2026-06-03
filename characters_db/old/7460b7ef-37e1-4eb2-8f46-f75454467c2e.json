@@ -1,0 +1,121 @@
+{
+    "character_id": "7460b7ef-37e1-4eb2-8f46-f75454467c2e",
+    "identity": {
+        "name": "逼逼拉餔",
+        "race": "遠古史萊姆",
+        "class": "魔法生物",
+        "level": 1,
+        "alignment": "中立",
+        "background_summary": "作為遠古史萊姆的後裔，逼逼拉餔因體型微小且未完全發育，尚未掌握完整戰鬥技巧。",
+        "personality_tags": [
+            "敏感",
+            "隱忍",
+            "低調"
+        ],
+        "goals": [
+            {
+                "id": 1,
+                "desc": "探索遺忘的史萊姆遺跡",
+                "status": "active"
+            }
+        ]
+    },
+    "attributes": {
+        "STR": {
+            "score": 8,
+            "mod": -1,
+            "desc": "力量"
+        },
+        "DEX": {
+            "score": 10,
+            "mod": 0,
+            "desc": "敏捷"
+        },
+        "CON": {
+            "score": 15,
+            "mod": 2,
+            "desc": "體質"
+        },
+        "INT": {
+            "score": 12,
+            "mod": 1,
+            "desc": "智力"
+        },
+        "WIS": {
+            "score": 9,
+            "mod": -1,
+            "desc": "感知"
+        },
+        "CHA": {
+            "score": 6,
+            "mod": -2,
+            "desc": "魅力"
+        }
+    },
+    "vitals": {
+        "hp": {
+            "current": 10,
+            "max": 10,
+            "temp": 0
+        },
+        "mp": {
+            "current": 3,
+            "max": 3,
+            "name": "魔力"
+        },
+        "defense": {
+            "value": 12,
+            "source": "輕甲加成"
+        }
+    },
+    "skills": [
+        {
+            "name": "自然適應",
+            "attr": "CON",
+            "bonus": 2,
+            "is_proficient": true
+        }
+    ],
+    "abilities": [
+        {
+            "name": "膿液防禦",
+            "type": "passive",
+            "effect_desc": "對物理攻擊有50%機率反射傷害，但無法抵擋精金武器",
+            "automation_tag": "物理抗性"
+        },
+        {
+            "name": "細胞再生",
+            "type": "active",
+            "effect_desc": "每回合恢復1點傷害，但會消耗全部魔力",
+            "automation_tag": "再生"
+        },
+        {
+            "name": "黏液污染",
+            "type": "active",
+            "effect_desc": "攻擊時有30%機率附加中毒，但自身移動速度減半",
+            "automation_tag": "中毒"
+        }
+    ],
+    "inventory": {
+        "equipped": {
+            "main_hand": {
+                "name": "無",
+                "type": "none",
+                "damage": "0",
+                "tags": [
+                    "無裝備"
+                ]
+            },
+            "armor": {
+                "name": "無",
+                "base_ac": 0
+            }
+        },
+        "backpack": [],
+        "currency": {
+            "gold": 0,
+            "silver": 0
+        }
+    },
+    "status_effects": []
+}

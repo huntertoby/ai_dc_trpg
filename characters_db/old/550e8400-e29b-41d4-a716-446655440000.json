@@ -1,0 +1,114 @@
+{
+    "character_id": "550e8400-e29b-41d4-a716-446655440000",
+    "identity": {
+        "name": "艾尔文",
+        "race": "人类",
+        "class": "火法师",
+        "level": 1,
+        "alignment": "中立善良",
+        "background_summary": "在魔法风暴中觉醒的见习法师，因尚未完全掌握元素之力而暂时被限制在初级阶段。",
+        "personality_tags": [
+            "专注",
+            "好奇",
+            "谨慎"
+        ],
+        "goals": [
+            {
+                "id": 1,
+                "desc": "寻找失落的火焰之书",
+                "status": "active"
+            }
+        ]
+    },
+    "attributes": {
+        "STR": {
+            "score": 10,
+            "mod": 0,
+            "desc": "力量"
+        },
+        "DEX": {
+            "score": 12,
+            "mod": 1,
+            "desc": "敏捷"
+        },
+        "CON": {
+            "score": 11,
+            "mod": 0,
+            "desc": "体质"
+        },
+        "INT": {
+            "score": 14,
+            "mod": 2,
+            "desc": "智力"
+        },
+        "WIS": {
+            "score": 10,
+            "mod": 0,
+            "desc": "感知"
+        },
+        "CHA": {
+            "score": 8,
+            "mod": -1,
+            "desc": "魅力"
+        }
+    },
+    "vitals": {
+        "hp": {
+            "current": 9,
+            "max": 9,
+            "temp": 0
+        },
+        "mp": {
+            "current": 4,
+            "max": 4,
+            "name": "魔法值"
+        },
+        "defense": {
+            "value": 13,
+            "source": "敏捷+体质+轻甲"
+        }
+    },
+    "skills": [
+        {
+            "name": "元素认知",
+            "attr": "INT",
+            "bonus": 2,
+            "is_proficient": true
+        }
+    ],
+    "abilities": [
+        {
+            "name": "火焰微光",
+            "type": "passive",
+            "effect_desc": "每次施法消耗1点魔法值",
+            "automation_tag": "magic_cast"
+        }
+    ],
+    "inventory": {
+        "equipped": {
+            "main_hand": {
+                "name": "橡木法杖",
+                "type": "weapon",
+                "damage": "1d4",
+                "tags": [
+                    "魔法"
+                ]
+            },
+            "armor": {
+                "name": "粗麻长袍",
+                "base_ac": 10
+            }
+        },
+        "backpack": [
+            {
+                "name": "火绒",
+                "quantity": 5
+            }
+        ],
+        "currency": {
+            "gold": 3,
+            "silver": 0
+        }
+    },
+    "status_effects": []
+}

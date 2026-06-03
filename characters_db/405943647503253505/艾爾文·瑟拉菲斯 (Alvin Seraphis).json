@@ -1,0 +1,179 @@
+{
+    "character_id": "405943647503253505",
+    "name": "艾爾文·瑟拉菲斯 (Alvin Seraphis)",
+    "job_name": "光暗魔導師",
+    "base_jobs": [
+        "巫師",
+        "元素使"
+    ],
+    "race": "鳳凰血裔",
+    "base_race": "鳳凰血裔",
+    "level": 1,
+    "exp": 0,
+    "gold": 0,
+    "background": "出生於鳳凰一族的分枝血脈，天生擁有操控光與暗雙重元素的罕見天賦。然而，這份力量在年幼時極不穩定——他能在同一個瞬間召出耀目的聖光，卻也同時被暗影吞噬雙手。經過漫長的苦修，他終於勉強將兩種相斥的力量融合於一具瘦弱的軀體之中。如今的他雖然仍遠未達到「魔導師」的真正境界，但已經能夠在戰鬥中交替使用光明與黑暗的法術，成為一位獨一無二的光暗雙修者。",
+    "primary_stats": {
+        "STR": 5,
+        "DEX": 5,
+        "CON": 5,
+        "INT": 5,
+        "WIS": 5,
+        "CHA": 5
+    },
+    "equipment_slots": {
+        "head": null,
+        "shoulders": null,
+        "cloak": null,
+        "chest": null,
+        "hands": null,
+        "legs": null,
+        "feet": null,
+        "main_hand": null,
+        "off_hand": null,
+        "trinket_1": null,
+        "trinket_2": null,
+        "ring_1": null,
+        "ring_2": null
+    },
+    "bonus_points_spent": 0,
+    "stat_points": 5,
+    "abilities": [
+        {
+            "name": "聖光穿刺",
+            "description": "以純淨光芒凝聚於指尖，化為一道銳利的光線貫穿敵人。艾爾文的右手在接觸目標的瞬間爆發出耀眼的白光，彷彿太陽從他體內迸發而出。",
+            "tier": "T5",
+            "mechanics": {
+                "action_type": "damage",
+                "target_type": "single",
+                "cost": {
+                    "MP": 8
+                },
+                "formula": {
+                    "type": "multiplier",
+                    "base_stat": "STR",
+                    "dice": "2d6+2",
+                    "divisor": 15.0
+                },
+                "keywords": [],
+                "custom_logic": "",
+                "narrative_effect": "一道刺目的光線從艾爾文指尖射出，空氣因高溫和壓縮而微微扭曲。目標被光芒貫穿後留下淡淡的金色殘影。"
+            }
+        },
+        {
+            "name": "暗影吞噬",
+            "description": "召喚濃稠的黑暗籠罩周圍，將敵人的身形吞入其中。艾爾文的左臂被無盡暗影浸染，他呼喚出的黑霧彷彿有生命般蠕動著。",
+            "tier": "T5",
+            "mechanics": {
+                "action_type": "damage",
+                "target_type": "aoe",
+                "cost": {
+                    "MP": 10
+                },
+                "formula": {
+                    "type": "multiplier",
+                    "base_stat": "DEX",
+                    "dice": "3d4+3",
+                    "divisor": 22.5
+                },
+                "keywords": [],
+                "custom_logic": "",
+                "narrative_effect": "無邊的黑霧從艾爾文腳下蔓延開來，彷彿吞噬一切的深淵張開了巨口。被籠罩的敵人眼中倒映出旋轉的暗影漩渦，最終化為虛無。"
+            }
+        },
+        {
+            "name": "光影交織",
+            "description": "將光與暗的力量交融為一體，釋放出一道同時包含兩重元素的衝擊波。艾爾文閉上雙眼，體內相斥的元素終於在瞬間達成平衡。",
+            "tier": "T4",
+            "mechanics": {
+                "action_type": "damage",
+                "target_type": "aoe",
+                "cost": {
+                    "MP": 25
+                },
+                "formula": {
+                    "type": "multiplier",
+                    "base_stat": "INT",
+                    "dice": "3d6+4",
+                    "divisor": 18.0
+                },
+                "keywords": [
+                    "Pierce"
+                ],
+                "custom_logic": "",
+                "narrative_effect": "光與暗在艾爾文身前交纏融合，形成一道螺旋狀的能量柱轟然爆發。白色與黑色的流光在衝擊波中旋轉、碰撞，最終將周圍的一切撕裂。"
+            }
+        }
+    ],
+    "personality": {
+        "belief": "光與暗並非對立，而是一體兩面的存在；唯有接受自己的陰影，才能真正掌控光芒。",
+        "flaw": "過於依賴法術的平衡感，一旦其中一股力量失衡，便會陷入短暫的虛弱狀態。",
+        "fear": "害怕終有一天無法承受雙重力量而崩潰，被光與暗同時撕裂。"
+    },
+    "vitality": {
+        "hp": 150,
+        "max_hp": 150,
+        "mp": 125,
+        "max_mp": 125,
+        "stamina": 125,
+        "max_stamina": 125,
+        "sanity": 125,
+        "max_sanity": 125
+    },
+    "inventory": [
+        {
+            "name": "瑟拉菲斯之星杖",
+            "description": "由艾爾文·瑟拉菲斯的父母在元素潮汐中親手鍛造。杖身流淌著星塵般的光輝，當他吟唱咒語時，杖尖會綻放出與其魔力共鳴的元素之花。",
+            "quantity": 1,
+            "item_type": "equipment",
+            "slot_type": "main_hand",
+            "tier": "T5",
+            "item_level": 1,
+            "is_two_handed": false,
+            "special_effect": "",
+            "bonuses": {
+                "INT": 7.0,
+                "WIS": 2.0
+            }
+        },
+        {
+            "name": "瑟拉菲斯之息·元素法袍",
+            "description": "由艾爾文親手縫製的輕薄法衣，內嵌數顆微光流動的元素晶石。穿著時能感受到元素之力如呼吸般起伏，彷彿與施法者的心跳同步共鳴。",
+            "quantity": 1,
+            "item_type": "equipment",
+            "slot_type": "chest",
+            "tier": "T5",
+            "item_level": 1,
+            "is_two_handed": false,
+            "special_effect": "「元素同調」——施放元素系法術時，法袍會釋放一道環繞自身的能量波紋，使下一次攻擊有 100% 機率觸發額外元素傷害加成（持續 3 秒）。",
+            "bonuses": {
+                "INT": 6.0,
+                "WIS": 3.0
+            }
+        },
+        {
+            "name": "瑟拉菲斯之翼——星軌長褲",
+            "description": "由艾爾文·瑟拉菲斯親手縫製的魔法長褲，布料如夜空般深邃，織入星辰軌跡。穿戴者能感受到元素之力在膝蓋間流轉，每一次踏步都伴隨微弱的奧術迴響。",
+            "quantity": 1,
+            "item_type": "equipment",
+            "slot_type": "legs",
+            "tier": "T5",
+            "item_level": 1,
+            "is_two_handed": false,
+            "special_effect": "",
+            "bonuses": {
+                "INT": 3.0,
+                "WIS": 3.0,
+                "CHA": 2.0,
+                "STR": 1.0,
+                "DEX": 1.0,
+                "CON": 1.0
+            }
+        }
+    ],
+    "status_effects": [],
+    "location": [
+        0,
+        0
+    ],
+    "last_regen": 0.0
+}
