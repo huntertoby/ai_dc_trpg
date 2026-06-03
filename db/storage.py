@@ -5,13 +5,15 @@ from typing import Optional, List
 from core.models import CharacterSchema
 
 class CharacterRepository:
-    DB_ROOT = "characters_db"
+    # 使用絕對路徑確保在不同環境下都能正確讀取
+    PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    DB_ROOT = os.path.join(PROJECT_ROOT, "characters_db")
 
     @classmethod
     def _get_user_folder(cls, user_id: str) -> str:
         folder = os.path.join(cls.DB_ROOT, user_id)
         if not os.path.exists(folder):
-            os.makedirs(folder)
+            os.makedirs(folder, exist_ok=True)
         return folder
 
     @classmethod
@@ -71,12 +73,17 @@ class CharacterRepository:
 
     @classmethod
     def list_characters(cls, user_id: str) -> List[str]:
-        """列出使用者所有角色的名稱 (排除 settings.json)"""
+        """列出使用者所有角色的名稱 (排除 settings.json, warehouse.json 等系統檔案)"""
         folder = cls._get_user_folder(user_id)
         if not os.path.exists(folder):
             return []
-        # 排除 settings.json
-        return [f.replace(".json", "") for f in os.listdir(folder) if f.endswith(".json") and f != "settings.json"]
+        
+        excluded_files = ["settings.json", "warehouse.json"]
+        return [
+            f.replace(".json", "") 
+            for f in os.listdir(folder) 
+            if f.endswith(".json") and f not in excluded_files
+        ]
 
     @classmethod
     def delete_character(cls, user_id: str, char_name: str) -> bool:
@@ -117,12 +124,27 @@ class CharacterRepository:
 
     @classmethod
     def get_user_settings(cls, user_id: str) -> dict:
-        """獲取使用者設定，若無則回傳預設值"""
+        """獲取使用者設定，若無則回傳預設值 (具備容錯處理)"""
         folder = cls._get_user_folder(user_id)
         path = os.path.join(folder, "settings.json")
         if os.path.exists(path):
-            with open(path, "r", encoding="utf-8") as f:
-                return json.load(f)
+            try:
+                with open(path, "r", encoding="utf-8") as f:
+                    return json.load(f)
+            except Exception as e:
+                print(f"讀取 settings.json 失敗: {e}")
+        
+        # 嘗試從舊版 active.txt 恢復活躍角色
+        active_txt = os.path.join(folder, "active.txt")
+        if os.path.exists(active_txt):
+            try:
+                with open(active_txt, "r", encoding="utf-8") as f:
+                    name = f.read().strip()
+                    if name:
+                        return {"public_mode": False, "active_character": name}
+            except:
+                pass
+                
         return {"public_mode": False} # 預設為私有模式
 
     # --- 倉庫 (Warehouse) 相關功能 ---

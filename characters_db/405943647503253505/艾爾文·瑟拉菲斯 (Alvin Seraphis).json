@@ -175,5 +175,38 @@
         0,
         0
     ],
-    "last_regen": 0.0
+    "last_regen": 0.0,
+    "max_inventory_slots": 20,
+    "rank": "E",
+    "reputation": 0,
+    "active_quests": [
+        {
+            "id": "Q-1780480957-0",
+            "title": "史萊姆之患",
+            "description": "王都南側的農場近日被大量史萊姆侵擾，它們吞噬了數畝作物。請冒險者們協助驅除這些黏糊糊的小怪物。",
+            "rank_required": "E",
+            "level_required": 1,
+            "objectives": [
+                {
+                    "type": "kill",
+                    "target_id": "史萊姆",
+                    "count": 5,
+                    "current_count": 0,
+                    "location": [
+                        1,
+                        0
+                    ]
+                }
+            ],
+            "rewards": {
+                "gold": 100,
+                "exp": 200,
+                "reputation": 7
+            },
+            "is_global": false,
+            "slots_left": 999,
+            "deadline": null
+        }
+    ],
+    "known_rumors": []
 }

@@ -16,7 +16,9 @@
             "npc_traits": [
                 "冷靜",
                 "公正"
-            ]
+            ],
+            "talk_cost": 10,
+            "rumor_rate": 0.5
         },
         {
             "id": "tavern",
@@ -30,7 +32,9 @@
             "npc_traits": [
                 "熱情",
                 "看人很準"
-            ]
+            ],
+            "talk_cost": 3,
+            "rumor_rate": 0.4
         },
         {
             "id": "plaza",
@@ -41,7 +45,9 @@
                 "news"
             ],
             "npc_name": null,
-            "npc_traits": []
+            "npc_traits": [],
+            "talk_cost": 2,
+            "rumor_rate": 0.1
         },
         {
             "id": "forge",
@@ -55,7 +61,9 @@
             "npc_traits": [
                 "頑固",
                 "視技術如生命"
-            ]
+            ],
+            "talk_cost": 6,
+            "rumor_rate": 0.25
         },
         {
             "id": "market",
@@ -69,7 +77,9 @@
             "npc_traits": [
                 "狡黠",
                 "極致精明"
-            ]
+            ],
+            "talk_cost": 5,
+            "rumor_rate": 0.3
         },
         {
             "id": "warehouse",
@@ -84,7 +94,9 @@
             "npc_traits": [
                 "機械化",
                 "絕對精準"
-            ]
+            ],
+            "talk_cost": 15,
+            "rumor_rate": 0.15
         },
         {
             "id": "mage_tower",
@@ -98,7 +110,9 @@
             "npc_traits": [
                 "睿智",
                 "嚴謹"
-            ]
+            ],
+            "talk_cost": 12,
+            "rumor_rate": 0.6
         },
         {
             "id": "sanctuary",
@@ -112,7 +126,9 @@
             "npc_traits": [
                 "溫柔",
                 "慈悲"
-            ]
+            ],
+            "talk_cost": 8,
+            "rumor_rate": 0.15
         },
         {
             "id": "training_ground",
@@ -123,7 +139,9 @@
                 "test_dummy"
             ],
             "npc_name": null,
-            "npc_traits": []
+            "npc_traits": [],
+            "talk_cost": 7,
+            "rumor_rate": 0.35
         }
     ],
     "base_level": 1,

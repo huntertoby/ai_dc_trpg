@@ -459,7 +459,9 @@ class CityView(discord.ui.View):
             color=discord.Color.gold()
         )
         if building.npc_name:
-            embed.add_field(name="👤 駐守人員", value=f"**{building.npc_name}** ({', '.join(building.npc_traits)})")
+            npc_info = f"**{building.npc_name}** ({', '.join(building.npc_traits)})"
+            talk_info = f"💬 交談花費: `{building.talk_cost}` 體力 (情報率: {int(building.rumor_rate*100)}%)"
+            embed.add_field(name="👤 駐守人員", value=f"{npc_info}\n{talk_info}")
             
         # 根據建築 features 顯示功能按鈕
         view = BuildingView(self.character, self.user, building, self.area)
@@ -482,9 +484,24 @@ class BuildingView(discord.ui.View):
     def _add_feature_buttons(self):
         # 根據 building.features 動態添加功能按鈕
         if "quest" in self.building.features:
-            btn = discord.ui.Button(label="📜 領取委託", style=discord.ButtonStyle.success)
-            btn.callback = self.open_quest_board
-            self.add_item(btn)
+            btn_take = discord.ui.Button(label="📜 領取委託", style=discord.ButtonStyle.success)
+            btn_take.callback = self.open_quest_board
+            self.add_item(btn_take)
+            
+            btn_report = discord.ui.Button(label="✅ 任務回報", style=discord.ButtonStyle.primary)
+            btn_report.callback = self.report_quests
+            self.add_item(btn_report)
+
+        # [新增] 如果有 NPC，添加聊天按鈕
+        if self.building.npc_name:
+            btn_talk = discord.ui.Button(label=f"💬 與 {self.building.npc_name} 交談", style=discord.ButtonStyle.secondary)
+            btn_talk.callback = self.talk_to_npc
+            self.add_item(btn_talk)
+
+        if "rank" in self.building.features:
+            btn_rank = discord.ui.Button(label="🎖️ 階級提升", style=discord.ButtonStyle.secondary)
+            btn_rank.callback = self.rank_up_action
+            self.add_item(btn_rank)
 
         if "storage" in self.building.features:
             btn = discord.ui.Button(label="🌀 開啟虛空倉庫", style=discord.ButtonStyle.success)
@@ -496,10 +513,94 @@ class BuildingView(discord.ui.View):
             btn.callback = self.rest_action
             self.add_item(btn)
 
-        # 永遠有返回城市大廳的按鈕
         btn_back = discord.ui.Button(label="🔙 走出建築", style=discord.ButtonStyle.secondary)
         btn_back.callback = self.back_to_city
         self.add_item(btn_back)
+
+    async def talk_to_npc(self, interaction: discord.Interaction):
+        """與 NPC 交談 (消耗建築專屬體力，包含動態情報獲取與持久化儲存)"""
+        # 1. 檢查體力 (使用建築物專屬消耗)
+        COST = self.building.talk_cost
+        if self.character.data.vitality.stamina < COST:
+            await interaction.response.send_message(f"❌ 你太累了，連話都說不清楚... (需要 {COST} 體力)", ephemeral=True)
+            return
+
+        # 2. 扣除體力並儲存
+        self.character.data.vitality.stamina -= COST
+        self.character.save()
+
+        await interaction.response.defer(ephemeral=True)
+        
+        from services.llm_service import LMStudioClient
+        llm_client = LMStudioClient()
+        
+        # 3. 定義地區專屬情報池
+        area_rumors = {
+            "0,0": [ # 萬族樞紐
+                "據說在北方 (0, 3) 的沼澤地帶，有人發現了生鏽的古代寶箱。",
+                "小心 (2, -2) 的陰影森林，那裡的哥布林比平常更兇暴。",
+                "如果你想提升實力，聽說 (1, 1) 的老戰士願意指導新手。",
+                "最近城外的史萊姆異常聚集，似乎是因為 (-1, -1) 出現了能量波動。"
+            ],
+        }
+        
+        current_pool = area_rumors.get(self.area.id, ["聽說遠方有一片未被發掘的荒野，藏著失落的文明。"])
+        
+        # 4. 判定是否生成情報 (使用建築物專屬機率)
+        import random
+        is_rumor = random.random() < self.building.rumor_rate
+        target_rumor = random.choice(current_pool) if is_rumor else None
+        
+        # 5. 構建系統提示詞
+        system_prompt = f"""
+        你現在扮演 TRPG 中的 NPC：{self.building.npc_name}。
+        性格特質：{', '.join(self.building.npc_traits)}
+        目前位置：{self.area.name} - {self.building.name}
+        
+        **【對話規範】**
+        1. 嚴禁使用第三人稱敘事、括號動作或旁白。只輸出說出口的話。
+        2. 語氣要親切、符合性格。玩家可以一直找你聊天，只要他們有體力。
+        3. 如果【情報標記】為 True，你必須在閒聊中自然地嵌入這條傳聞：{target_rumor}
+        4. 如果【情報標記】為 False，則進行普通的日常閒聊，或是對當前地區的感慨。
+        5. 語言：繁體中文。長度限制 70 字以內。
+        """
+        
+        prompt = f"冒險者 {self.character.data.name} 湊過來找你聊天。【情報標記】：{is_rumor}"
+        
+        try:
+            content = await llm_client.call(prompt, system_prompt)
+            content = content.replace("「", "").replace("」", "").replace("『", "").replace("』", "")
+            
+            # 6. 如果獲取了情報，儲存到角色的已知情報清單中
+            if is_rumor and target_rumor not in self.character.data.known_rumors:
+                self.character.data.known_rumors.append(target_rumor)
+                self.character.save()
+            
+            embed = discord.Embed(
+                title=f"💬 與 {self.building.npc_name} 的對話",
+                description=f"**{self.building.npc_name}**：\n「{content.strip()}」",
+                color=discord.Color.blue()
+            )
+            
+            footer_text = f"消耗體力: {COST} | 剩餘體力: {self.character.data.vitality.stamina}"
+            if is_rumor:
+                footer_text += " | ✨ 獲得新情報！"
+            
+            embed.set_footer(text=footer_text)
+            await interaction.followup.send(embed=embed, ephemeral=True)
+        except Exception as e:
+            await interaction.followup.send(f"❌ 交談失敗: {e}", ephemeral=True)
+
+    async def report_quests(self, interaction: discord.Interaction):
+        """[開發中] 檢查任務目標並回報獎勵"""
+        # 這裡未來會接邏輯：遍歷 character.data.active_quests，檢查 objectives 是否完成
+        await interaction.response.send_message("🔍 執法官·瓦爾肯正在檢查你的任務紀錄... (回報功能開發中)", ephemeral=True)
+
+    async def rank_up_action(self, interaction: discord.Interaction):
+        """[開發中] 冒險者階級提升邏輯"""
+        # 這裡未來會接邏輯：檢查等級、聲望、金幣，並開啟 AI 生成的升階試煉
+        current_rank = self.character.data.rank
+        await interaction.response.send_message(f"🎖️ 你目前是 **Rank {current_rank}**。升階試煉需要達到 Lv.10 且擁有 100 點聲望。(功能開發中)", ephemeral=True)
 
     async def open_warehouse(self, interaction: discord.Interaction):
         # 這裡將實作倉庫介面
@@ -514,14 +615,52 @@ class BuildingView(discord.ui.View):
             llm_client = LMStudioClient()
             quests = await GuildManager.refresh_board_if_needed(llm_client)
             
-        view = QuestBoardView(self.character, self.user, quests)
-        await interaction.response.edit_message(content="📜 公會公告欄：這裡貼滿了各地的委託。", view=view)
+        view = QuestBoardView(self.character, self.user, quests, self.building, self.area)
+        await interaction.response.edit_message(content="📜 公會公告欄：這裡貼滿了各地的委託。", embed=None, view=view)
 
     async def rest_action(self, interaction: discord.Interaction):
-        # 簡單的體力恢復邏輯
-        self.character.data.vitality.stamina = self.character.max_stamina
-        self.character.save()
-        await interaction.response.send_message("🍺 你在大口喝下美酒後，感到精力充沛！(體力已補滿)", ephemeral=True)
+        from datetime import datetime
+        from core.constants import STAMINA_RESTORE_COST
+        
+        today = datetime.now().strftime("%Y-%m-%d")
+        
+        # 1. 優先使用免費次數
+        if self.character.data.last_free_rest_date != today:
+            self.character.data.last_free_rest_date = today
+            self.character.data.vitality.stamina = self.character.max_stamina
+            self.character.save()
+            
+            await interaction.response.send_message(
+                "🍺 你在大口喝下美酒後，感到精力充沛！\n*(今日首份體力免費補滿)*", 
+                ephemeral=True
+            )
+        # 2. 如果免費次數已用，檢查付費次數
+        elif self.character.data.last_paid_rest_date != today:
+            if self.character.data.gold < STAMINA_RESTORE_COST:
+                await interaction.response.send_message(
+                    f"❌ 今天的免費體力補給已用完。額外購買需要 **{STAMINA_RESTORE_COST}** 金幣，你的金幣不足！", 
+                    ephemeral=True
+                )
+                return
+            
+            # 扣除金幣並恢復
+            self.character.data.gold -= STAMINA_RESTORE_COST
+            self.character.data.last_paid_rest_date = today
+            self.character.data.vitality.stamina = self.character.max_stamina
+            self.character.save()
+            
+            await interaction.response.send_message(
+                f"💰 你支付了 **{STAMINA_RESTORE_COST}** 金幣，再次感到精力充沛！\n*(今日額外體力補給已完成)*", 
+                ephemeral=True
+            )
+        # 3. 如果兩次都用完
+        else:
+            await interaction.response.send_message(
+                "❌ 今天的體力補給次數(免費1次 + 付費1次)已達上限。請明天再來吧！", 
+                ephemeral=True
+            )
+            return
+            
         # 更新背景 Embed
         await interaction.message.edit(embed=interaction.message.embeds[0])
 
@@ -532,20 +671,28 @@ class BuildingView(discord.ui.View):
 
 class QuestBoardView(discord.ui.View):
     """公會任務佈告欄視圖"""
-    def __init__(self, character: Character, user: discord.Member, quests: List[QuestSchema]):
+    def __init__(self, character: Character, user: discord.Member, quests: List['QuestSchema'], building: 'BuildingSchema' = None, area: 'AreaSchema' = None):
         super().__init__(timeout=300.0)
         self.character = character
         self.user = user
         self.quests = quests
+        self.building = building
+        self.area = area
         self.page = 0
         self._update_select()
 
     def _update_select(self):
         self.clear_items()
         
+        # 1. 獲取角色目前已接取的任務 ID 列表，用於過濾
+        active_quest_ids = [q.id for q in self.character.data.active_quests]
+        
+        # 2. 過濾掉已接取的任務
+        available_quests = [q for q in self.quests if q.id not in active_quest_ids]
+        
         # 每次顯示 25 個任務 (Discord 限制)
         options = []
-        for i, q in enumerate(self.quests):
+        for i, q in enumerate(available_quests):
             # 檢查階級是否符合
             status = "✅" if q.rank_value <= self.character.rank_value else "🔒"
             options.append(discord.SelectOption(
@@ -560,7 +707,7 @@ class QuestBoardView(discord.ui.View):
         select = discord.ui.Select(
             placeholder="點擊查看任務詳情...",
             options=options,
-            disabled=(len(self.quests) == 0)
+            disabled=(len(available_quests) == 0)
         )
         select.callback = self.quest_callback
         self.add_item(select)
@@ -574,20 +721,37 @@ class QuestBoardView(discord.ui.View):
         idx = int(interaction.data['values'][0])
         if idx == -1: return
         
-        quest = self.quests[idx]
+        # 重新計算 available_quests 以取得正確的 index
+        active_quest_ids = [q.id for q in self.character.data.active_quests]
+        available_quests = [q for q in self.quests if q.id not in active_quest_ids]
+        
+        quest = available_quests[idx]
         embed = self._build_quest_embed(quest)
         
         # 顯示接受任務按鈕的 View
-        view = QuestDetailView(self.character, self.user, quest, self.quests)
+        view = QuestDetailView(self.character, self.user, quest, self.quests, self.building, self.area)
         await interaction.response.edit_message(embed=embed, view=view)
 
     async def back_to_guild(self, interaction: discord.Interaction):
-        # 這裡需要找到公會建築，簡單處理先回 CityView
-        from core.world import WorldManager
-        area = WorldManager.load_area(0, 0)
-        view = CityView(self.character, self.user, area)
-        from ui.embeds import build_area_embed
-        await interaction.response.edit_message(embed=build_area_embed(area, self.character), view=view)
+        if self.building and self.area:
+            # 返回正確的建築物介面
+            embed = discord.Embed(
+                title=f"🚪 進入：{self.building.name}",
+                description=f"你推開了大門，進入了{self.building.name}。\n\n*{self.building.description}*",
+                color=discord.Color.gold()
+            )
+            if self.building.npc_name:
+                embed.add_field(name="👤 駐守人員", value=f"**{self.building.npc_name}** ({', '.join(self.building.npc_traits)})")
+            
+            view = BuildingView(self.character, self.user, self.building, self.area)
+            await interaction.response.edit_message(content=None, embed=embed, view=view)
+        else:
+            # 備援方案：返回城市導覽
+            from core.world import WorldManager
+            area = WorldManager.load_area(0, 0)
+            view = CityView(self.character, self.user, area)
+            from ui.embeds import build_area_embed
+            await interaction.response.edit_message(content=None, embed=build_area_embed(area, self.character), view=view)
 
     def _build_quest_embed(self, quest: QuestSchema) -> discord.Embed:
         color = RANK_COLORS.get(quest.rank_required, discord.Color.blue())
@@ -614,12 +778,14 @@ class QuestBoardView(discord.ui.View):
 
 class QuestDetailView(discord.ui.View):
     """任務詳情與接受視圖"""
-    def __init__(self, character: Character, user: discord.Member, quest: QuestSchema, all_quests: List[QuestSchema]):
+    def __init__(self, character: Character, user: discord.Member, quest: 'QuestSchema', all_quests: List['QuestSchema'], building: 'BuildingSchema' = None, area: 'AreaSchema' = None):
         super().__init__(timeout=120.0)
         self.character = character
         self.user = user
         self.quest = quest
         self.all_quests = all_quests
+        self.building = building
+        self.area = area
 
     @discord.ui.button(label="✅ 接受委託", style=discord.ButtonStyle.success)
     async def accept_quest(self, interaction: discord.Interaction, button: discord.ui.Button):
@@ -640,19 +806,13 @@ class QuestDetailView(discord.ui.View):
             self.character.save()
             await interaction.response.send_message(f"✅ 已成功領取委託：**{self.quest.title}**！請前往目標地點執行。", ephemeral=True)
             # 返回列表
-            view = QuestBoardView(self.character, self.user, self.all_quests)
-            from core.world import WorldManager
-            area = WorldManager.load_area(0, 0)
-            from ui.embeds import build_area_embed
-            await interaction.message.edit(embed=build_area_embed(area, self.character), view=view)
+            view = QuestBoardView(self.character, self.user, self.all_quests, self.building, self.area)
+            await interaction.message.edit(content="📜 公會公告欄：這裡貼滿了各地的委託。", embed=None, view=view)
         else:
             await interaction.response.send_message("❌ 領取失敗，該任務名額可能已滿。", ephemeral=True)
 
     @discord.ui.button(label="🔙 返回列表", style=discord.ButtonStyle.secondary)
     async def back_to_list(self, interaction: discord.Interaction, button: discord.ui.Button):
-        view = QuestBoardView(self.character, self.user, self.all_quests)
-        from core.world import WorldManager
-        area = WorldManager.load_area(0, 0)
-        from ui.embeds import build_area_embed
-        await interaction.response.edit_message(embed=build_area_embed(area, self.character), view=view)
+        view = QuestBoardView(self.character, self.user, self.all_quests, self.building, self.area)
+        await interaction.response.edit_message(content="📜 公會公告欄：這裡貼滿了各地的委託。", embed=None, view=view)
 

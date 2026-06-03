@@ -349,6 +349,15 @@ class StatsAllocationView(discord.ui.View):
         except Exception as e:
             await interaction.followup.send(f"❌ 分配失敗: {e}", ephemeral=True)
 
+    @discord.ui.button(label="🔙 返回面板", style=discord.ButtonStyle.primary, row=2)
+    async def back_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        from ui.views import CharacterHubView
+        from ui.embeds import build_character_embed
+        hub_view = CharacterHubView(self.character_data, interaction.user)
+        embed = build_character_embed(self.character_data, interaction.user)
+        await interaction.response.edit_message(content=None, embed=embed, view=hub_view)
+        self.stop()
+
 
 class ConfirmCharacterView(discord.ui.View):
     def __init__(self, character_data: Character, llm_client, user: discord.Member):

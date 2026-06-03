@@ -5,7 +5,9 @@ from typing import Optional, List, Dict
 from core.models import AreaSchema, BuildingSchema
 
 class WorldManager:
-    AREA_DB_PATH = "area_db"
+    # 使用絕對路徑確保在不同環境下都能正確讀取
+    PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    AREA_DB_PATH = os.path.join(PROJECT_ROOT, "area_db")
     
     @classmethod
     def get_area_id(cls, x: int, y: int) -> str:
@@ -13,15 +15,24 @@ class WorldManager:
 
     @classmethod
     def load_area(cls, x: int, y: int) -> Optional[AreaSchema]:
-        """讀取指定座標的地區資料"""
+        """讀取指定座標的地區資料 (若 (0,0) 不存在則自動初始化)"""
         area_id = cls.get_area_id(x, y)
         file_path = os.path.join(cls.AREA_DB_PATH, f"{area_id}.json")
         
-        if os.path.exists(file_path):
+        if not os.path.exists(file_path):
+            if x == 0 and y == 0:
+                # 只有主城會自動恢復
+                print("🚩 偵測到主城資料遺失，正在重新初始化...")
+                return init_main_city()
+            return None
+            
+        try:
             with open(file_path, 'r', encoding='utf-8') as f:
                 data = json.load(f)
                 return AreaSchema(**data)
-        return None
+        except Exception as e:
+            print(f"解析地區 {area_id} 失敗: {e}")
+            return None
 
     @classmethod
     def save_area(cls, area: AreaSchema):
@@ -47,53 +58,62 @@ def init_main_city():
             id="guild", name="📜 冒險者公會", 
             description="萬族共同維護的公會，是接取委託與回報功績的中心。", 
             features=["quest", "rank"],
-            npc_name="執法官·瓦爾肯", npc_traits=["冷靜", "公正"]
+            npc_name="執法官·瓦爾肯", npc_traits=["冷靜", "公正"],
+            talk_cost=10, rumor_rate=0.5
         ),
         BuildingSchema(
             id="tavern", name="🍻 諸神酒館", 
             description="這裡提供世界各地的美酒，是恢復精力與聽取冒險傳聞的最佳去處。", 
             features=["rest", "rumor"],
-            npc_name="老闆娘·瑪拉", npc_traits=["熱情", "看人很準"]
+            npc_name="老闆娘·瑪拉", npc_traits=["熱情", "看人很準"],
+            talk_cost=3, rumor_rate=0.4
         ),
         BuildingSchema(
             id="plaza", name="⛲ 星辰中央廣場", 
             description="城市的中心點，設有古老的遠距離傳送矩陣。", 
-            features=["warp", "news"]
+            features=["warp", "news"],
+            talk_cost=2, rumor_rate=0.1
         ),
         BuildingSchema(
             id="forge", name="⚒️ 萬物熔爐", 
             description="融合了矮人鍛造、精靈附魔與人族工藝的頂尖鐵匠鋪。", 
             features=["upgrade", "repair"],
-            npc_name="大工匠·托比昂", npc_traits=["頑固", "視技術如生命"]
+            npc_name="大工匠·托比昂", npc_traits=["頑固", "視技術如生命"],
+            talk_cost=6, rumor_rate=0.25
         ),
         BuildingSchema(
             id="market", name="⚖️ 跨位面市集", 
             description="匯集了來自各個大陸與位面的貿易商隊，販售各類物資。", 
             features=["trade", "sell"],
-            npc_name="貿易官·斯卡卡", npc_traits=["狡黠", "極致精明"]
+            npc_name="貿易官·斯卡卡", npc_traits=["狡黠", "極致精明"],
+            talk_cost=5, rumor_rate=0.3
         ),
         BuildingSchema(
             id="warehouse", name="🌀 虛空倉庫", 
             description="由空間魔法維護的保險庫，你名下的所有冒險者都能在此共享物資與金幣。", 
             features=["storage", "shared_bank", "upgrade_bag"],
-            npc_name="監管者·零", npc_traits=["機械化", "絕對精準"]
+            npc_name="監管者·零", npc_traits=["機械化", "絕對精準"],
+            talk_cost=15, rumor_rate=0.15
         ),
         BuildingSchema(
             id="mage_tower", name="🔮 真理高塔", 
             description="法術研究與神祕學交流的中心，也提供神祕物品的鑑定服務。", 
             features=["identify", "skill_learn"],
-            npc_name="導師·埃隆", npc_traits=["睿智", "嚴謹"]
+            npc_name="導師·埃隆", npc_traits=["睿智", "嚴謹"],
+            talk_cost=12, rumor_rate=0.6
         ),
         BuildingSchema(
             id="sanctuary", name="🌿 生命神殿", 
             description="一處寧靜的中立庇護所，提供治癒與靈魂重塑（洗點）服務。", 
             features=["heal", "respec"],
-            npc_name="祭司·伊蓮娜", npc_traits=["溫柔", "慈悲"]
+            npc_name="祭司·伊蓮娜", npc_traits=["溫柔", "慈悲"],
+            talk_cost=8, rumor_rate=0.15
         ),
         BuildingSchema(
             id="training_ground", name="⚔️ 英靈修練場", 
             description="供各族冒險者切磋武藝、測試技能強度的開放式靶場。", 
-            features=["training", "test_dummy"]
+            features=["training", "test_dummy"],
+            talk_cost=7, rumor_rate=0.35
         )
     ]
     

@@ -1,0 +1,179 @@
+{
+    "character_id": "316152517731811328",
+    "name": "超人",
+    "job_name": "萬物主宰者",
+    "base_jobs": [
+        "神諭者",
+        "占星師"
+    ],
+    "race": "鳳凰血裔",
+    "base_race": "古神後裔",
+    "level": 1,
+    "exp": 0,
+    "gold": 0,
+    "background": "「我手握無限，卻尚不識其全貌。」——超人自太古深處甦醒，掌心承載著足以支配萬物的無限手套。然而，這股力量尚未完全與他融合。每當他試圖以無限之力撼動天地時，手套內湧出的能量往往超出預期，有時甚至將自身也一同捲入。他擁有無匹的潛力，但現階段的他仍需要學習如何駕馭這份力量——因為真正強大的並非手套本身，而是佩戴者的意志。",
+    "primary_stats": {
+        "STR": 5,
+        "DEX": 5,
+        "CON": 5,
+        "INT": 5,
+        "WIS": 5,
+        "CHA": 5
+    },
+    "equipment_slots": {
+        "head": null,
+        "shoulders": null,
+        "cloak": null,
+        "chest": {
+            "name": "天穹之眼",
+            "description": "由純粹的預知之力凝聚而成的胸甲，表面浮現著恆常旋轉的星辰紋路。穿戴者能感受到宇宙脈動在胸前流淌，每一顆星子都低語著未來的命運。",
+            "quantity": 1,
+            "item_type": "equipment",
+            "slot_type": "chest",
+            "tier": "T5",
+            "item_level": 1,
+            "is_two_handed": false,
+            "special_effect": "",
+            "bonuses": {
+                "INT": 5.0,
+                "WIS": 4.0,
+                "CHA": 1.0
+            }
+        },
+        "hands": null,
+        "legs": {
+            "name": "神諭之星履帶",
+            "description": "織入星圖的長袍雙腿，每道縫線都記錄著天體的軌跡。穿戴者邁步之際，星辰亦隨之移動。",
+            "quantity": 1,
+            "item_type": "equipment",
+            "slot_type": "legs",
+            "tier": "T5",
+            "item_level": 1,
+            "is_two_handed": false,
+            "special_effect": "穿戴者每踏出一步，便會喚醒一條星座的守護之力，使下次施放的占星術獲得額外效果。",
+            "bonuses": {
+                "INT": 6.0,
+                "CHA": 3.0
+            }
+        },
+        "feet": null,
+        "main_hand": {
+            "name": "星谕之瞳",
+            "description": "一柄以凝练星辰之力雕琢而成的水晶杖，杖顶悬浮着一枚永不熄灭的银白眼眸。凝视其中者，能窥见命运丝线的走向——凡占卜于此杖前之人，无不被那深不可测的神谕所震慑。",
+            "quantity": 1,
+            "item_type": "equipment",
+            "slot_type": "main_hand",
+            "tier": "T5",
+            "item_level": 1,
+            "is_two_handed": false,
+            "special_effect": "",
+            "bonuses": {
+                "INT": 6.0,
+                "WIS": 3.0
+            }
+        },
+        "off_hand": null,
+        "trinket_1": null,
+        "trinket_2": null,
+        "ring_1": null,
+        "ring_2": null
+    },
+    "bonus_points_spent": 0,
+    "stat_points": 5,
+    "abilities": [
+        {
+            "name": "無限之力",
+            "description": "掌心無限手套釋放原始能量，以純粹力量粉碎眼前目標。",
+            "tier": "T5",
+            "mechanics": {
+                "action_type": "damage",
+                "target_type": "single",
+                "cost": {
+                    "MP": 6
+                },
+                "formula": {
+                    "type": "multiplier",
+                    "base_stat": "STR",
+                    "dice": "2d6+2",
+                    "divisor": 15.0
+                },
+                "keywords": [],
+                "custom_logic": "",
+                "narrative_effect": "無限手套泛起微光，超人握拳向前——一道肉眼難辨的衝擊波瞬間掠過，目標彷彿被無形巨掌擊中。"
+            }
+        },
+        {
+            "name": "太古之息",
+            "description": "自深處甦醒的能量如呼吸般擴散，將周圍一切納入影響範圍。",
+            "tier": "T5",
+            "mechanics": {
+                "action_type": "damage",
+                "target_type": "aoe",
+                "cost": {
+                    "MP": 8
+                },
+                "formula": {
+                    "type": "multiplier",
+                    "base_stat": "STR",
+                    "dice": "2d6+2",
+                    "divisor": 22.5
+                },
+                "keywords": [],
+                "custom_logic": "",
+                "narrative_effect": "超人深吸一口氣，無限手套的光芒向外湧出——空氣彷彿凝結成無形的波紋，將一切捲入其中。"
+            }
+        },
+        {
+            "name": "萬物主宰·指掌",
+            "description": "以意志支配能量流向，精準點向敵方要害，摧枯拉朽。",
+            "tier": "T4",
+            "mechanics": {
+                "action_type": "damage",
+                "target_type": "single",
+                "cost": {
+                    "MP": 20
+                },
+                "formula": {
+                    "type": "multiplier",
+                    "base_stat": "STR",
+                    "dice": "3d6+3",
+                    "divisor": 12.0
+                },
+                "keywords": [
+                    "Execute"
+                ],
+                "custom_logic": "",
+                "narrative_effect": "超人食指微抬，無限手套中湧出的能量如絲線般纏繞目標——他彷彿在輕描淡寫間，就已掌控了對方的命運。"
+            }
+        }
+    ],
+    "personality": {
+        "belief": "只要意志堅定，無限的力量終將為我所用",
+        "flaw": "對自身力量的認知不足，常因過度自信而低估挑戰",
+        "fear": "恐懼自己尚未完全覺醒的潛力會在關鍵時刻失控"
+    },
+    "vitality": {
+        "hp": 150,
+        "max_hp": 150,
+        "mp": 125,
+        "max_mp": 330,
+        "stamina": 125,
+        "max_stamina": 125,
+        "sanity": 125,
+        "max_sanity": 160
+    },
+    "inventory": [],
+    "status_effects": [],
+    "location": [
+        0,
+        0
+    ],
+    "last_regen": 0.0,
+    "max_inventory_slots": 20,
+    "rank": "E",
+    "reputation": 0,
+    "active_quests": [],
+    "known_rumors": [],
+    "last_free_rest_date": null,
+    "last_paid_rest_date": null
+}

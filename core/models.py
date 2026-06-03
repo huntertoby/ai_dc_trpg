@@ -30,6 +30,8 @@ class BuildingSchema(BaseModel):
     features: List[str] = [] # 功能標籤：['rest', 'trade', 'quest', 'bank', 'training']
     npc_name: Optional[str] = None
     npc_traits: List[str] = []
+    talk_cost: int = 5         # 交談消耗體力
+    rumor_rate: float = 0.3    # 獲取情報機率 (0.0 ~ 1.0)
 
 class AreaSchema(BaseModel):
     id: str                   # 格式 "x,y"
@@ -164,5 +166,8 @@ class CharacterSchema(BaseModel):
     rank: str = "E"                                             # 新增：冒險者階級 (E, D, C, B, A, S)
     reputation: int = 0                                         # 新增：名聲值
     active_quests: List[QuestSchema] = []                        # 新增：進行中的任務
+    known_rumors: List[str] = []                                # 新增：已獲取的情報/傳聞
+    last_free_rest_date: Optional[str] = None                   # 新增：上次免費休息日期 (YYYY-MM-DD)
+    last_paid_rest_date: Optional[str] = None                   # 新增：上次付費休息日期 (YYYY-MM-DD)
 
 
