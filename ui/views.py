@@ -12,12 +12,35 @@ from ui.embeds import (
 
 class CharacterHubView(discord.ui.View):
     """角色主控制面板 (The Hub)"""
-    def __init__(self, character: Character, user: discord.Member):
+    def __init__(self, character: Character, user: discord.Member, active_tab: str = "panel"):
         super().__init__(timeout=300.0)
         self.character = character
         self.user = user
+        self.active_tab = active_tab
+        # 更新按鈕樣式
+        self._update_button_styles()
         # 初始化時動態添加屬性分配按鈕
         self._add_stats_button()
+
+    def _update_button_styles(self):
+        """根據 active_tab 更新按鈕顏色"""
+        # 建立按鈕標籤與 tab 名稱的映射
+        tab_map = {
+            "panel": "⚜️ 面板",
+            "equipment": "🛡️ 裝備",
+            "profile": "📖 傳記",
+            "inventory": "🎒 背包",
+            "skills": "📜 技能",
+            "unequip": "👕 脫裝",
+            "location": "🗺️ 探索"
+        }
+        
+        for child in self.children:
+            if isinstance(child, discord.ui.Button):
+                # 找出目前按鈕對應的 tab
+                btn_tab = next((k for k, v in tab_map.items() if v == child.label), None)
+                if btn_tab:
+                    child.style = discord.ButtonStyle.primary if btn_tab == self.active_tab else discord.ButtonStyle.secondary
 
     async def interaction_check(self, interaction: discord.Interaction) -> bool:
         if interaction.user.id != self.user.id:
@@ -28,21 +51,23 @@ class CharacterHubView(discord.ui.View):
     @discord.ui.button(label="⚜️ 面板", style=discord.ButtonStyle.primary)
     async def show_panel(self, interaction: discord.Interaction, button: discord.ui.Button):
         embed = build_character_embed(self.character, self.user)
-        # 重新初始化 Hub 以更新按鈕狀態 (例如點數變化)
-        view = CharacterHubView(self.character, self.user)
+        # 重新初始化 Hub 以更新按鈕狀態
+        view = CharacterHubView(self.character, self.user, active_tab="panel")
         await interaction.response.edit_message(content=None, embed=embed, view=view)
 
     @discord.ui.button(label="🛡️ 裝備", style=discord.ButtonStyle.secondary)
     async def show_equipment(self, interaction: discord.Interaction, button: discord.ui.Button):
         from ui.embeds import build_equipment_embed
         embed = build_equipment_embed(self.character, self.user)
-        await interaction.response.edit_message(content=None, embed=embed, view=self)
+        view = CharacterHubView(self.character, self.user, active_tab="equipment")
+        await interaction.response.edit_message(content=None, embed=embed, view=view)
 
     @discord.ui.button(label="📖 傳記", style=discord.ButtonStyle.secondary)
     async def show_profile(self, interaction: discord.Interaction, button: discord.ui.Button):
         from ui.embeds import build_profile_embed
         embed = build_profile_embed(self.character, self.user)
-        await interaction.response.edit_message(content=None, embed=embed, view=self)
+        view = CharacterHubView(self.character, self.user, active_tab="profile")
+        await interaction.response.edit_message(content=None, embed=embed, view=view)
 
     def _add_stats_button(self):
         """動態添加屬性分配按鈕"""
@@ -77,7 +102,8 @@ class CharacterHubView(discord.ui.View):
     @discord.ui.button(label="📜 技能", style=discord.ButtonStyle.secondary)
     async def show_skills(self, interaction: discord.Interaction, button: discord.ui.Button):
         embed = build_skills_embed(self.character, self.user)
-        await interaction.response.edit_message(content=None, embed=embed, view=self)
+        view = CharacterHubView(self.character, self.user, active_tab="skills")
+        await interaction.response.edit_message(content=None, embed=embed, view=view)
 
     @discord.ui.button(label="👕 脫裝", style=discord.ButtonStyle.secondary)
     async def show_unequip(self, interaction: discord.Interaction, button: discord.ui.Button):
@@ -85,23 +111,32 @@ class CharacterHubView(discord.ui.View):
         embed = build_character_embed(self.character, self.user)
         embed.title = f"👕 {self.character.data.name} - 卸下裝備"
         embed.description = "請選擇要卸下的裝備部位。"
+        # 脫裝界面比較特殊，它使用自己的 View
         await interaction.response.edit_message(content=None, embed=embed, view=view)
 
     @discord.ui.button(label="🗺️ 探索", style=discord.ButtonStyle.secondary)
     async def show_location(self, interaction: discord.Interaction, button: discord.ui.Button):
         from core.world import WorldManager
+        from ui.embeds import build_area_embed
+        
         loc = self.character.data.location
         area = WorldManager.load_area(loc[0], loc[1])
         
-        if area and area.type == "city":
-            # 如果在城市，顯示城市導覽視圖
-            view = CityView(self.character, self.user, area)
-            from ui.embeds import build_area_embed
-            await interaction.response.edit_message(content=None, embed=build_area_embed(area, self.character), view=view)
-        else:
-            # 如果在野外，顯示移動視圖 (待實作)
+        if not area:
+            # 正常情況下移動時就會生成，這裡作為備援
             embed = build_location_embed(self.character, self.user)
-            await interaction.response.edit_message(content=None, embed=embed, view=self)
+            view = CharacterHubView(self.character, self.user, active_tab="location")
+            await interaction.response.edit_message(content=None, embed=embed, view=view)
+            return
+
+        embed = build_area_embed(area, self.character)
+        
+        if area.type == "city":
+            view = CityView(self.character, self.user, area)
+        else:
+            view = ExplorationView(self.character, self.user, area)
+            
+        await interaction.response.edit_message(content=None, embed=embed, view=view)
 
     @discord.ui.button(label="🎭 換角", style=discord.ButtonStyle.secondary)
     async def show_switch(self, interaction: discord.Interaction, button: discord.ui.Button):
@@ -417,28 +452,36 @@ class CityView(discord.ui.View):
         return True
 
     def _add_building_select(self):
-        options = []
-        for b in self.area.buildings:
-            options.append(discord.SelectOption(
-                label=b.name,
-                description=b.description[:50],
-                value=b.id
-            ))
-        
-        select = discord.ui.Select(
-            placeholder="前往建築物...",
-            options=options,
-            custom_id="city_building_select"
-        )
-        select.callback = self.building_callback
-        self.add_item(select)
+        if not self.area.landmarks:
+            # 如果沒有地標，不添加下拉選單
+            pass
+        else:
+            options = []
+            for b in self.area.landmarks:
+                options.append(discord.SelectOption(
+                    label=b.name,
+                    description=b.description[:50],
+                    value=b.id
+                ))
+            
+            select = discord.ui.Select(
+                placeholder="前往建築物...",
+                options=options,
+                custom_id="city_building_select"
+            )
+            select.callback = self.building_callback
+            self.add_item(select)
 
         # 添加離開城市的按鈕 (方向鍵)
         directions = [("⬆️ 北", [0, 1]), ("⬇️ 南", [0, -1]), ("⬅️ 西", [-1, 0]), ("➡️ 東", [1, 0])]
         for label, move in directions:
             btn = discord.ui.Button(label=label, style=discord.ButtonStyle.secondary, row=1)
-            # 這裡需要一個移動的回調，先預留
-            # btn.callback = self.move_callback 
+            # 使用閉包捕獲當前的 move 向量
+            def make_callback(m):
+                async def callback(interaction):
+                    await self.move_callback(interaction, m[0], m[1])
+                return callback
+            btn.callback = make_callback(move)
             self.add_item(btn)
         
         # 返回面板
@@ -446,11 +489,35 @@ class CityView(discord.ui.View):
         btn_back.callback = self.back_callback
         self.add_item(btn_back)
 
+    async def move_callback(self, interaction: discord.Interaction, dx: int, dy: int):
+        from core.world import WorldManager
+        from services.llm_service import LMStudioClient
+        llm_client = LMStudioClient()
+        
+        await interaction.response.defer()
+        
+        result_msg = await WorldManager.move_character(self.character, dx, dy, llm_client)
+        
+        # 移動後，根據新地點重新渲染 View
+        loc = self.character.data.location
+        new_area = WorldManager.load_area(loc[0], loc[1])
+        
+        from ui.embeds import build_area_embed
+        embed = build_area_embed(new_area, self.character)
+        
+        if new_area.type == "city":
+            view = CityView(self.character, self.user, new_area)
+        else:
+            view = ExplorationView(self.character, self.user, new_area)
+            
+        await interaction.edit_original_response(content=result_msg, embed=embed, view=view)
+
     async def building_callback(self, interaction: discord.Interaction):
         building_id = interaction.data['values'][0]
-        building = next((b for b in self.area.buildings if b.id == building_id), None)
-        
+        building = next((b for b in self.area.landmarks if b.id == building_id), None)
+
         if not building: return
+
         
         # 這裡未來會接 AI 生成進入建築的描述
         embed = discord.Embed(
@@ -471,6 +538,209 @@ class CityView(discord.ui.View):
         hub_view = CharacterHubView(self.character, self.user)
         await interaction.response.edit_message(embed=build_character_embed(self.character, self.user), view=hub_view)
 
+class ExplorationView(discord.ui.View):
+    """荒野探索視圖"""
+    def __init__(self, character: Character, user: discord.Member, area: 'AreaSchema'):
+        super().__init__(timeout=300.0)
+        self.character = character
+        self.user = user
+        self.area = area
+        self._add_exploration_buttons()
+
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        if interaction.user.id != self.user.id:
+            await interaction.response.send_message("❌ 你不能替別人探索荒野！", ephemeral=True)
+            return False
+        return True
+
+    def _add_exploration_buttons(self):
+        self.clear_items()
+        
+        # 1. 移動按鈕 (第一排)
+        directions = [("⬆️ 北", [0, 1]), ("⬇️ 南", [0, -1]), ("⬅️ 西", [-1, 0]), ("➡️ 東", [1, 0])]
+        for label, move in directions:
+            btn = discord.ui.Button(label=label, style=discord.ButtonStyle.secondary, row=0)
+            def make_callback(m):
+                async def callback(interaction):
+                    await self.move_callback(interaction, m[0], m[1])
+                return callback
+            btn.callback = make_callback(move)
+            self.add_item(btn)
+
+        # 2. 地標互動 (如果有)
+        for b in self.area.landmarks:
+            btn = discord.ui.Button(label=f"🔍 進入 {b.name}", style=discord.ButtonStyle.success, row=1)
+            def make_building_callback(building):
+                async def callback(interaction):
+                    # 進入地標的邏輯
+                    embed = discord.Embed(
+                        title=f"📍 抵達：{building.name}",
+                        description=building.description,
+                        color=discord.Color.green()
+                    )
+                    view = BuildingView(self.character, self.user, building, self.area)
+                    await interaction.response.edit_message(embed=embed, view=view)
+                return callback
+            btn.callback = make_building_callback(b)
+            self.add_item(btn)
+
+        # 3. 任務/情報偵測 (第二排)
+        loc = self.character.data.location
+        
+        # 偵測任務
+        target_quests = [q for q in self.character.data.active_quests 
+                         if any(obj.location == loc for obj in q.objectives)]
+        if target_quests:
+            btn_quest = discord.ui.Button(label="⚔️ 執行任務目標", style=discord.ButtonStyle.primary, row=2)
+            btn_quest.callback = self.handle_quest_objective
+            self.add_item(btn_quest)
+            
+        # 偵測情報 (簡單關鍵字比對)
+        loc_str = f"({loc[0]}, {loc[1]})"
+        has_rumor = any(loc_str in r for r in self.character.data.known_rumors)
+        if has_rumor:
+            btn_rumor = discord.ui.Button(label="✨ 進行情報調查", style=discord.ButtonStyle.success, row=2)
+            btn_rumor.callback = self.handle_rumor_investigation
+            self.add_item(btn_rumor)
+
+        # 4. 深度探索按鈕 (第三排)
+        user_id = str(self.user.id)
+        is_explored = user_id in self.area.interacted_users
+        
+        btn_deep = discord.ui.Button(
+            label="👣 深入探索" if not is_explored else "✅ 已探索此處", 
+            style=discord.ButtonStyle.success if not is_explored else discord.ButtonStyle.secondary, 
+            row=3,
+            disabled=is_explored
+        )
+        btn_deep.callback = self.handle_deep_exploration
+        self.add_item(btn_deep)
+
+        # 5. 返回按鈕
+        btn_back = discord.ui.Button(label="🔙 返回面板", style=discord.ButtonStyle.secondary, row=4)
+        btn_back.callback = self.back_callback
+        self.add_item(btn_back)
+
+    async def handle_deep_exploration(self, interaction: discord.Interaction):
+        """執行每一格一次的深度探索 (包含戰鬥、機遇、線索)"""
+        COST = 10
+        if self.character.data.vitality.stamina < COST:
+            await interaction.response.send_message(f"❌ 體力不足以進行深度探索！ (需要 {COST} 體力)", ephemeral=True)
+            return
+
+        # 1. 扣除體力並標記已探索
+        self.character.data.vitality.stamina -= COST
+        self.area.interacted_users.append(str(self.user.id))
+        
+        # 儲存角色與地區狀態
+        self.character.save()
+        from core.world import WorldManager
+        WorldManager.save_area(self.area)
+
+        await interaction.response.defer()
+        
+        # 2. 隨機判定結果
+        import random
+        roll = random.random()
+        
+        from services.llm_service import LMStudioClient
+        llm_client = LMStudioClient()
+        
+        if roll < 0.70:
+            # 70% 戰鬥 (遭遇戰)
+            event_type = "combat"
+            prompt_action = "你在探索時突然遭到怪物的伏擊！"
+        elif roll < 0.90:
+            # 20% 機遇 (獲得金幣或消耗品)
+            event_type = "opportunity"
+            prompt_action = "你在灌木叢中發現了一些遺失的財寶或有用的藥草。"
+        else:
+            # 10% 線索 (獲取傳聞)
+            event_type = "clue"
+            prompt_action = "你發現了一些不尋常的痕跡，似乎指引向某個秘密。"
+
+        # 3. 呼叫 AI 生成敘事
+        system_prompt = f"""
+        你是一個 TRPG 遊戲管理員 (GM)。玩家正在地區【{self.area.name}】進行深度探索。
+        事件類型：{event_type}
+        
+        **【環境背景】**
+        {self.area.description}
+        
+        **【任務】**
+        請根據事件類型與環境，寫一段 60 字以內的精彩敘事。
+        - 如果是 combat：描述怪物如何現身、牠的樣子以及戰鬥一觸即發的氣氛。
+        - 如果是 opportunity：描述玩家發現了什麼（例如：獲得了 50 金幣）。
+        - 如果是 clue：描述一個神祕的線索。
+        
+        回應請直接輸出敘事文字，不要有括號或旁白。
+        """
+        
+        try:
+            narrative = await llm_client.call(prompt_action, system_prompt)
+            
+            embed = discord.Embed(
+                title=f"👣 深度探索結果：{self.area.name}",
+                description=narrative,
+                color=discord.Color.red() if event_type == "combat" else discord.Color.gold()
+            )
+            
+            # 4. 根據結果執行實際效果
+            if event_type == "opportunity":
+                gold_gain = random.randint(20, 100)
+                self.character.data.gold += gold_gain
+                self.character.save()
+                embed.add_field(name="💰 獲得獎勵", value=f"獲得了 **{gold_gain}** 金幣！")
+            
+            elif event_type == "clue":
+                # 未來可以從地區情報池抽一個
+                clue_msg = f"聽說在座標 ({self.area.id}) 附近隱藏著不為人知的寶藏。"
+                if clue_msg not in self.character.data.known_rumors:
+                    self.character.data.known_rumors.append(clue_msg)
+                    self.character.save()
+                embed.add_field(name="✨ 獲得線索", value=clue_msg)
+            
+            elif event_type == "combat":
+                embed.add_field(name="⚔️ 進入戰鬥", value="戰鬥系統即將啟動，請做好準備！")
+
+            # 更新 View (按鈕變灰)
+            self._add_exploration_buttons()
+            await interaction.edit_original_response(embed=embed, view=self)
+            
+        except Exception as e:
+            await interaction.followup.send(f"❌ 探索發生錯誤: {e}", ephemeral=True)
+
+    async def move_callback(self, interaction: discord.Interaction, dx: int, dy: int):
+        from core.world import WorldManager
+        from services.llm_service import LMStudioClient
+        llm_client = LMStudioClient()
+        
+        await interaction.response.defer()
+        result_msg = await WorldManager.move_character(self.character, dx, dy, llm_client)
+        
+        loc = self.character.data.location
+        new_area = WorldManager.load_area(loc[0], loc[1])
+        
+        from ui.embeds import build_area_embed
+        embed = build_area_embed(new_area, self.character)
+        
+        if new_area.type == "city":
+            view = CityView(self.character, self.user, new_area)
+        else:
+            view = ExplorationView(self.character, self.user, new_area)
+            
+        await interaction.edit_original_response(content=result_msg, embed=embed, view=view)
+
+    async def handle_quest_objective(self, interaction: discord.Interaction):
+        await interaction.response.send_message("🔍 你正在調查此處的任務線索... (任務執行功能開發中)", ephemeral=True)
+
+    async def handle_rumor_investigation(self, interaction: discord.Interaction):
+        await interaction.response.send_message("🔎 根據情報，你在這裡仔細搜索著... (調查功能開發中)", ephemeral=True)
+
+    async def back_callback(self, interaction: discord.Interaction):
+        hub_view = CharacterHubView(self.character, self.user)
+        await interaction.response.edit_message(content=None, embed=build_character_embed(self.character, self.user), view=hub_view)
+
 class BuildingView(discord.ui.View):
     """建築物內部互動視圖"""
     def __init__(self, character: Character, user: discord.Member, building: 'BuildingSchema', area: 'AreaSchema'):
@@ -480,6 +750,12 @@ class BuildingView(discord.ui.View):
         self.building = building
         self.area = area
         self._add_feature_buttons()
+
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        if interaction.user.id != self.user.id:
+            await interaction.response.send_message("❌ 這不是你的按鈕喔！", ephemeral=True)
+            return False
+        return True
 
     def _add_feature_buttons(self):
         # 根據 building.features 動態添加功能按鈕
@@ -681,6 +957,12 @@ class QuestBoardView(discord.ui.View):
         self.page = 0
         self._update_select()
 
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        if interaction.user.id != self.user.id:
+            await interaction.response.send_message("❌ 這不是你的按鈕喔！", ephemeral=True)
+            return False
+        return True
+
     def _update_select(self):
         self.clear_items()
         
@@ -786,6 +1068,12 @@ class QuestDetailView(discord.ui.View):
         self.all_quests = all_quests
         self.building = building
         self.area = area
+
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        if interaction.user.id != self.user.id:
+            await interaction.response.send_message("❌ 這不是你的按鈕喔！", ephemeral=True)
+            return False
+        return True
 
     @discord.ui.button(label="✅ 接受委託", style=discord.ButtonStyle.success)
     async def accept_quest(self, interaction: discord.Interaction, button: discord.ui.Button):

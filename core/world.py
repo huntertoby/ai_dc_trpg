@@ -51,6 +51,38 @@ class WorldManager:
         if dist == 0: return 1
         return dist * 2
 
+    @classmethod
+    async def move_character(cls, character: 'Character', dx: int, dy: int, llm_client) -> str:
+        """
+        執行移動邏輯：扣體力 -> 更新座標 -> 加載/生成地區
+        回傳移動後的結果描述
+        """
+        MOVE_COST = 5
+        if character.data.vitality.stamina < MOVE_COST:
+            return f"❌ 體力不足！移動需要 {MOVE_COST} 點體力。"
+            
+        # 更新座標
+        old_loc = character.data.location
+        new_x, new_y = old_loc[0] + dx, old_loc[1] + dy
+        
+        # 扣除體力
+        character.data.vitality.stamina -= MOVE_COST
+        character.data.location = [new_x, new_y]
+        character.save()
+        
+        # 加載地區
+        area = cls.load_area(new_x, new_y)
+        if not area:
+            # 觸發 AI 生成
+            from core.world_generator import WorldGenerator
+            area = await WorldGenerator.generate_area(new_x, new_y, llm_client)
+            if area:
+                cls.save_area(area)
+            else:
+                return "❌ 穿越邊境時發生了時空擾動 (AI 生成失敗)，移動取消。"
+                
+        return f"🚶 你向著目標前行，來到了 **{area.name}**。"
+
 def init_main_city():
     """初始化萬族樞紐主城 (0,0)"""
     buildings = [

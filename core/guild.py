@@ -77,8 +77,10 @@ class GuildManager:
         
         try:
             response = await llm_client.call(prompt, system_prompt)
-            from logic.workflows.character_creation import repair_and_parse_json
+
+            from utils.json_utils import repair_and_parse_json
             parsed = repair_and_parse_json(response)
+
             
             if not isinstance(parsed, list): return []
             

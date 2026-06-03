@@ -1,5 +1,5 @@
-from pydantic import BaseModel, Field
-from typing import List, Optional, Dict, Union, Literal
+from pydantic import BaseModel, Field, model_validator
+from typing import List, Optional, Dict, Union, Literal, Any
 from core.constants import RANK_ORDER
 
 class Item(BaseModel):
@@ -36,12 +36,21 @@ class BuildingSchema(BaseModel):
 class AreaSchema(BaseModel):
     id: str                   # 格式 "x,y"
     name: str
-    type: str                 # 'city', 'wild', 'dungeon'
+    type: str                 # 'city', 'wilderness', 'dungeon'
     description: str
-    buildings: List[BuildingSchema] = []
+    landmarks: List[BuildingSchema] = [] # 地標或興趣點 (原名 buildings)
     base_level: int = 1
     connections: List[str] = [] # 相鄰地區的 ID
     discovered_by: Optional[str] = None
+    interacted_users: List[str] = [] # 紀錄哪些玩家已經在這裡執行過「深入探索」
+
+    @model_validator(mode='before')
+    @classmethod
+    def fix_landmarks_rename(cls, data: Any) -> Any:
+        if isinstance(data, dict):
+            if "buildings" in data and "landmarks" not in data:
+                data["landmarks"] = data.pop("buildings")
+        return data
 
 class WarehouseSchema(BaseModel):
     user_id: str

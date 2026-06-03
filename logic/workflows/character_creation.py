@@ -8,127 +8,7 @@ from core.models import CharacterSchema, Skill, Equipment
 from core.character import Character
 from core.constants import BASE_JOBS, BASE_RACES, SKILL_KEYWORDS
 from core.skill_processor import SkillProcessor
-
-
-def repair_and_parse_json(text: str) -> Optional[dict]:
-    """
-    強大的 JSON 提取器：支援多塊提取、Markdown 優先、自動合體與結構修復。
-    """
-    if not text:
-        return None
-
-    # 1. 移除 <think> 思考區塊
-    text = re.sub(r'<think>.*?</think>', '', text, flags=re.DOTALL)
-
-    # 2. 優先尋找 Markdown 代碼塊 ```json ... ```
-    code_blocks = re.findall(r'```(?:json)?\s*(.*?)\s*```', text, re.DOTALL)
-    clean_text = "".join(code_blocks) if code_blocks else text
-
-    # 3. 提取所有頂層對象 (平衡大括號算法)
-    blocks = []
-    depth = 0
-    start = -1
-    for i, char in enumerate(clean_text):
-        if char == '{':
-            if depth == 0: start = i
-            depth += 1
-        elif char == '}':
-            depth -= 1
-            if depth == 0 and start != -1:
-                blocks.append(clean_text[start:i+1])
-    
-    # 如果沒找到 {} 但有 []
-    if not blocks:
-        match = re.search(r'(\[.*\])', clean_text, re.DOTALL)
-        if match:
-            try: return json.loads(match.group(1))
-            except: pass
-
-    # 4. 解析與合體
-    parsed_results = []
-    for b in blocks:
-        try:
-            # 修復常見 JSON 錯誤
-            b = re.sub(r',\s*\}', '}', b)
-            b = re.sub(r',\s*\]', ']', b)
-            parsed_results.append(json.loads(b))
-        except:
-            continue
-
-    if not parsed_results:
-        return None
-
-    # 5. 根據結果類型回傳
-    if len(parsed_results) == 1:
-        result = parsed_results[0]
-    else:
-        if all(isinstance(r, dict) for r in parsed_results):
-            # 檢查是否有重複的 key (例如都有 'name')，如果有，代表應該是 List
-            keys_overlap = False
-            seen_keys = set()
-            for r in parsed_results:
-                if any(k in seen_keys for k in r.keys()):
-                    keys_overlap = True
-                    break
-                seen_keys.update(r.keys())
-                
-            if keys_overlap:
-                result = parsed_results
-            else:
-                merged = {}
-                for r in parsed_results: merged.update(r)
-                result = merged
-        else:
-            result = parsed_results
-
-    # 6. 結構修復 (針對 AI "拉平" 結構的修復邏輯)
-    def fix_skill_structure(d):
-        if isinstance(d, dict):
-            # 1. 修復遺失的名字
-            if "name" not in d:
-                d["name"] = "未知技能"
-
-            # 2. 修復 tier
-            if "tier" in d and isinstance(d["tier"], int):
-                d["tier"] = f"T{d['tier']}"
-            if "tier" not in d:
-                d["tier"] = "T5"
-            
-            # 3. 修復 formula 結構異常 (如 denominator)
-            if "formula" in d:
-                f = d["formula"]
-                if isinstance(f, str):
-                    d["formula"] = { "type": "multiplier", "base_stat": "STR", "dice": "1d20", "divisor": 15.0 }
-                elif isinstance(f, dict):
-                    if "denominator" in f:
-                        f["divisor"] = f.pop("denominator")
-                    if "multiplier_value" in f:  # 處理 AI 自己發明的值
-                        f.pop("multiplier_value")
-                    if "base_stat" in f and f["base_stat"] not in ["STR", "DEX", "CON", "INT", "WIS", "CHA"]:
-                        f["base_stat"] = "STR"
-            else:
-                d["formula"] = { "type": "multiplier", "base_stat": "STR", "dice": "1d20", "divisor": 15.0 }
-                
-            # 4. 強制組裝成 mechanics
-            if "mechanics" not in d:
-                mechanics_keys = ["action_type", "formula", "cost", "keywords", "target_type", "narrative_effect", "custom_logic", "mp_cost"]
-                new_mechanics = {}
-                for k in list(d.keys()):
-                    if k in mechanics_keys or k == "mp_cost":
-                        val = d.pop(k)
-                        if k == "mp_cost": new_mechanics["cost"] = {"MP": val}
-                        else: new_mechanics[k] = val
-                d["mechanics"] = new_mechanics
-                if "description" not in d: d["description"] = d.get("name", "未命名技能")
-                if "action_type" not in d["mechanics"]: d["mechanics"]["action_type"] = "damage"
-        return d
-
-    if isinstance(result, list):
-        result = [fix_skill_structure(r) for r in result]
-    else:
-        result = fix_skill_structure(result)
-
-    return result
+from utils.json_utils import repair_and_parse_json
 
 
 def parse_bonus_points(text: str) -> dict:
@@ -279,6 +159,12 @@ class StatsAllocationView(discord.ui.View):
             "INT": "智力", "WIS": "感知", "CHA": "魅力"
         }
 
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        if str(interaction.user.id) != str(self.character_data.user_id):
+            await interaction.response.send_message("❌ 你不能分配別人的點數喔！", ephemeral=True)
+            return False
+        return True
+
     def get_content(self):
         stat_text = "\n".join([
             f"**{self.mapping[k]}**: {v:>2} " + ("🔹" * v if v > 0 else "▫️")
@@ -365,6 +251,12 @@ class ConfirmCharacterView(discord.ui.View):
         self.character_data = character_data
         self.llm_client = llm_client
         self.user = user
+
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        if interaction.user.id != self.user.id:
+            await interaction.response.send_message("❌ 你不能操作別人的設定喔！", ephemeral=True)
+            return False
+        return True
 
     def _get_preview_embeds(self) -> List[discord.Embed]:
         from ui.embeds import build_character_embed, build_skills_embed

@@ -1,10 +1,53 @@
 # core/skill_generator.py
 import asyncio
 import json
-from typing import Optional, List, Dict
+import re
+from typing import Optional, List, Dict, Any
 from core.models import Skill
 from core.skill_processor import SkillProcessor
 from core.constants import SKILL_KEYWORDS
+from utils.json_utils import repair_and_parse_json
+
+def fix_skill_structure(d):
+    if isinstance(d, dict):
+        # 1. 修復遺失的名字
+        if "name" not in d:
+            d["name"] = "未知技能"
+
+        # 2. 修復 tier
+        if "tier" in d and isinstance(d["tier"], int):
+            d["tier"] = f"T{d['tier']}"
+        if "tier" not in d:
+            d["tier"] = "T5"
+        
+        # 3. 修復 formula 結構異常 (如 denominator)
+        if "formula" in d:
+            f = d["formula"]
+            if isinstance(f, str):
+                d["formula"] = { "type": "multiplier", "base_stat": "STR", "dice": "1d20", "divisor": 15.0 }
+            elif isinstance(f, dict):
+                if "denominator" in f:
+                    f["divisor"] = f.pop("denominator")
+                if "multiplier_value" in f:  # 處理 AI 自己發明的值
+                    f.pop("multiplier_value")
+                if "base_stat" in f and f["base_stat"] not in ["STR", "DEX", "CON", "INT", "WIS", "CHA"]:
+                    f["base_stat"] = "STR"
+        else:
+            d["formula"] = { "type": "multiplier", "base_stat": "STR", "dice": "1d20", "divisor": 15.0 }
+            
+        # 4. 強制組裝成 mechanics
+        if "mechanics" not in d:
+            mechanics_keys = ["action_type", "formula", "cost", "keywords", "target_type", "narrative_effect", "custom_logic", "mp_cost"]
+            new_mechanics = {}
+            for k in list(d.keys()):
+                if k in mechanics_keys or k == "mp_cost":
+                    val = d.pop(k)
+                    if k == "mp_cost": new_mechanics["cost"] = {"MP": val}
+                    else: new_mechanics[k] = val
+            d["mechanics"] = new_mechanics
+            if "description" not in d: d["description"] = d.get("name", "未命名技能")
+            if "action_type" not in d["mechanics"]: d["mechanics"]["action_type"] = "damage"
+    return d
 
 def get_tier_rules(tier: str) -> str:
     """獲取不同階級的生成規則"""
@@ -91,12 +134,15 @@ async def generate_single_skill(description: str, tier: str, llm_client) -> Opti
             temperature=0.7
         )
         
-        from logic.workflows.character_creation import repair_and_parse_json
         parsed_data = repair_and_parse_json(response_text)
         
         if parsed_data:
             if isinstance(parsed_data, list) and len(parsed_data) > 0:
                 parsed_data = parsed_data[0]
+            
+            # 使用本地的修復邏輯
+            parsed_data = fix_skill_structure(parsed_data)
+            
             skill = Skill(**parsed_data)
             SkillProcessor.validate_and_clamp_skill(skill)
             return skill
@@ -154,14 +200,15 @@ async def generate_starter_skills(char_data: Dict, llm_client) -> List[Skill]:
             temperature=0.8
         )
         
-        from logic.workflows.character_creation import repair_and_parse_json
         skills_raw = repair_and_parse_json(response_text)
         
         valid_skills = []
         if isinstance(skills_raw, list):
             for s in skills_raw:
                 try:
-                    skill = Skill(**s)
+                    # 修復結構
+                    s_fixed = fix_skill_structure(s)
+                    skill = Skill(**s_fixed)
                     SkillProcessor.validate_and_clamp_skill(skill)
                     valid_skills.append(skill)
                 except:

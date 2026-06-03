@@ -179,9 +179,10 @@ def build_area_embed(area: 'AreaSchema', character: Character) -> discord.Embed:
         color=discord.Color.gold() if area.type == "city" else discord.Color.green()
     )
     
-    if area.buildings:
-        b_list = "\n".join([f"- **{b.name}**" for b in area.buildings])
-        embed.add_field(name="🏢 城市設施", value=b_list, inline=False)
+    if area.landmarks:
+        l_list = "\n".join([f"- **{b.name}**" for b in area.landmarks])
+        field_name = "🏢 城市設施" if area.type == "city" else "📍 地標興趣點"
+        embed.add_field(name=field_name, value=l_list, inline=False)
         
     loc = character.data.location
     embed.set_footer(text=f"📍 座標: ({loc[0]}, {loc[1]}) | ⚡ 精力: {character.data.vitality.stamina}/{character.max_stamina}")

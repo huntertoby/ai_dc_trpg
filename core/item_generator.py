@@ -64,8 +64,8 @@ async def generate_equipment_by_ai(
             temperature=0.7
         )
         
-        # 借用 character_creation 的解析邏輯
-        from logic.workflows.character_creation import repair_and_parse_json
+        # 使用全域的解析邏輯
+        from utils.json_utils import repair_and_parse_json
         parsed_data = repair_and_parse_json(response_text)
         
         if parsed_data:

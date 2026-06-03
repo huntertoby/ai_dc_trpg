@@ -162,7 +162,27 @@
         "sanity": 125,
         "max_sanity": 160
     },
-    "inventory": [],
+    "inventory": [
+        {
+            "name": "無敵安全帽 (The Invincible Helmet)",
+            "description": "這頂看似平凡的白色安全帽，在經歷過無數次車禍、落石甚至飛來橫矢後依然光亮如新。當交通攻擊臨頭時，它會微微震動並發出一聲清脆的「叮」，彷彿在說：「沒關係的。」",
+            "quantity": 1,
+            "item_type": "equipment",
+            "slot_type": "head",
+            "tier": "T1",
+            "item_level": 10000,
+            "is_two_handed": false,
+            "special_effect": "【無敵之盾】：受到來自交通工具或路面的傷害時，有 30% 機率將傷害完全抵消。若發生此情況，安全帽會短暫發出金光並將攻擊反彈給來源。",
+            "bonuses": {
+                "STR": 6200.0,
+                "CON": 6000.0,
+                "DEX": 6558.0,
+                "evasion_rate": 9.96,
+                "luck": 6.0,
+                "tenacity": 9.0
+            }
+        }
+    ],
     "status_effects": [],
     "location": [
         0,
@@ -172,7 +192,35 @@
     "max_inventory_slots": 20,
     "rank": "E",
     "reputation": 0,
-    "active_quests": [],
+    "active_quests": [
+        {
+            "id": "Q-1780480957-1",
+            "title": "採集月光草",
+            "description": "鍊金術師需要月光草作為煉藥材料，這種稀有植物只在月圓之夜綻放。請在森林深處為他收集十株。",
+            "rank_required": "E",
+            "level_required": 1,
+            "objectives": [
+                {
+                    "type": "collect",
+                    "target_id": "月光草",
+                    "count": 10,
+                    "current_count": 0,
+                    "location": [
+                        -2,
+                        -3
+                    ]
+                }
+            ],
+            "rewards": {
+                "gold": 100,
+                "exp": 200,
+                "reputation": 7
+            },
+            "is_global": false,
+            "slots_left": 999,
+            "deadline": null
+        }
+    ],
     "known_rumors": [],
     "last_free_rest_date": null,
     "last_paid_rest_date": null
