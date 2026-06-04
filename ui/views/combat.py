@@ -87,25 +87,13 @@ class CombatView(discord.ui.View):
 
     async def monster_turn_trigger(self, interaction: discord.Interaction):
         """觸發怪物的 AI 回合，自動處理所有連續的怪物回合"""
-        msgs = []
+        from logic.workflows.combat import process_monster_turns_workflow
+        res = await process_monster_turns_workflow(self.manager)
         
-        while not self.manager.is_finished:
-            curr = self.manager.get_current_entity()
-            if curr["type"] != "monster":
-                break # 輪到玩家了，停止自動循環
-                
-            result = await self.manager.monster_action()
-            msgs.append(result["msg"])
-            
-            if self.manager.is_finished:
-                break
-                
-            self.manager.next_turn()
-            
-        self.current_msg = "\n".join(msgs)
+        self.current_msg = "\n".join(res["messages"])
         self._update_buttons()
         
-        if self.manager.is_finished and self.manager.winner == "monster":
+        if res["finished"] and res["winner"] == "monster":
             await interaction.response.edit_message(embed=self._build_combat_embed(), view=self)
             await interaction.followup.send("💀 你被打敗了... 冒險暫時告一段落。", ephemeral=True)
         else:
@@ -115,26 +103,22 @@ class CombatView(discord.ui.View):
         await interaction.response.send_message("技能系統介接中...", ephemeral=True)
 
     async def flee_attempt(self, interaction: discord.Interaction):
-        if random.random() < 0.4:
-            self.manager.is_finished = True
+        from logic.workflows.combat import process_flee_workflow
+        res = process_flee_workflow(self.manager)
+        if res["success"]:
             await interaction.response.edit_message(content="🏃 你成功逃離了戰鬥！", embed=None, view=None)
         else:
             self.current_msg = "❌ 逃跑失敗！怪物擋住了你的去路。"
-            self.manager.next_turn()
             self._update_buttons()
             await interaction.response.edit_message(embed=self._build_combat_embed(), view=self)
 
     async def _process_victory(self, interaction: discord.Interaction):
-        # 結算獎勵
-        total_gold = sum(m["gold_reward"] for m in self.manager.monsters)
-        total_exp = sum(m["exp_reward"] for m in self.manager.monsters)
+        from logic.workflows.combat import process_victory_workflow
+        res = process_victory_workflow(self.character, self.manager.monsters)
         
-        self.character.data.gold += total_gold
-        leveled_up = self.character.add_exp(total_exp)
-        
-        msg = f"🏆 **戰鬥勝利！**\n獲得了 {total_gold}G 和 {total_exp}XP。"
-        if leveled_up:
-            msg += f"\n🎊 **等級提升至 Lv.{self.character.data.level}！**"
+        msg = f"🏆 **戰鬥勝利！**\n獲得了 {res['total_gold']}G 和 {res['total_exp']}XP。"
+        if res['leveled_up']:
+            msg += f"\n🎊 **等級提升至 Lv.{res['new_level']}！**"
             
         self.current_msg = msg
         self._update_buttons()

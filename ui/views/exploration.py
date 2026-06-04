@@ -203,28 +203,19 @@ class ExplorationView(discord.ui.View):
         self.add_item(btn_back)
 
     async def handle_hunt(self, interaction: discord.Interaction):
-        COST = 15
-        if self.character.data.vitality.stamina < COST:
-            await interaction.response.send_message("❌ 體力不足。", ephemeral=True)
+        from services.llm_service import LMStudioClient
+        from logic.workflows.exploration import hunt_workflow
+        from ui.views.combat import CombatView
+        
+        llm_client = LMStudioClient()
+        res = await hunt_workflow(self.character, self.area, llm_client)
+        
+        if not res["success"]:
+            await interaction.response.send_message(res["message"], ephemeral=True)
             return
             
-        self.character.data.vitality.stamina -= COST
-        self.area.threat_level += 0.5
-        self.character.save()
-        WorldManager.save_area(self.area)
-        
         await interaction.response.defer()
-        
-        from core.monster_engine import MonsterEngine
-        from ui.views.combat import CombatView
-        from services.llm_service import LMStudioClient
-        
-        # 1. 生成怪物群體 (包含物防、魔防、速度等)
-        llm_client = LMStudioClient()
-        m_group = await MonsterEngine.generate_monster_group(self.area, llm_client)
-        
-        # 2. 啟動互動式戰鬥視圖
-        view = CombatView(self.character, self.user, m_group)
+        view = CombatView(self.character, self.user, res["monsters"])
         embed = view._build_combat_embed()
         
         await interaction.edit_original_response(
@@ -234,53 +225,24 @@ class ExplorationView(discord.ui.View):
         )
 
     async def handle_deep_exploration(self, interaction: discord.Interaction):
-        if self.character.data.vitality.stamina < 10:
-            await interaction.response.send_message("❌ 體力不足。", ephemeral=True)
-            return
-        self.character.data.vitality.stamina -= 10
-        self.area.interacted_users.append(str(self.user.id))
-        self.character.save()
-        WorldManager.save_area(self.area)
-        # 構建更豐富的 AI GM Prompt
-        p = self.character.data.personality
-        char_traits = f"背景：{self.character.data.background}\n信仰：{p.belief} | 缺點：{p.flaw} | 恐懼：{p.fear}"
-        char_status = f"{self.character.data.job_name}(Lv.{self.character.data.level})"
-        hp_pct = (self.character.data.vitality.hp / self.character.data.vitality.max_hp) * 100
-        health_desc = "受傷嚴重" if hp_pct < 30 else ("略顯疲態" if hp_pct < 70 else "狀態良好")
-        
-        area_info = f"區域：{self.area.name} ({self.area.type})\n描述：{self.area.description}\n生態標籤：{', '.join(self.area.ecology_tags)}\n威脅等級：{self.area.threat_level}"
-        
-        sys_prompt = f"""
-        你是一個充滿想像力的 TRPG GM。
-        
-        【環境資訊】
-        {area_info}
-        
-        【角色資訊】
-        角色：{self.character.data.name} ({char_status})
-        狀態：{health_desc}
-        特質：{char_traits}
-        
-        請根據以上資訊生成一個即時發生的「探索困境」或「奇遇事件」。
-        要求：
-        1. 敘事風格要有代入感，能夠體現該區域的生態特色。
-        2. **特別注意**：嘗試將角色的背景、恐懼或缺點融入事件中，讓事件對該角色具有個人意義。
-        3. 字數控制在 100 字以內。
-        4. 只輸出故事敘事，不要有 GM 的開場白（如「好的，...」）。
-        """
-        
-        await interaction.response.defer(ephemeral=True)
         from services.llm_service import LMStudioClient
-        llm = LMStudioClient()
-        try:
-            txt = await llm.call("生成探索事件", sys_prompt)
-            btn = discord.ui.Button(label="🎬 採取行動", style=discord.ButtonStyle.primary)
-            async def act_cb(bi): await bi.response.send_modal(ArbiterModal(self.character, self.user, self.area, {"prompt_action": txt}))
-            btn.callback = act_cb
-            view = discord.ui.View(timeout=120)
-            view.add_item(btn)
-            await interaction.edit_original_response(embed=discord.Embed(title=f"🔎 探索發現：{self.area.name}", description=txt, color=discord.Color.gold()), view=view)
-        except Exception as e: await interaction.edit_original_response(content=f"❌ 錯誤: {e}")
+        from logic.workflows.exploration import deep_exploration_workflow
+        
+        llm_client = LMStudioClient()
+        await interaction.response.defer(ephemeral=True)
+        
+        res = await deep_exploration_workflow(self.character, self.area, str(self.user.id), llm_client)
+        if not res["success"]:
+            await interaction.edit_original_response(content=res["message"])
+            return
+            
+        txt = res["event_text"]
+        btn = discord.ui.Button(label="🎬 採取行動", style=discord.ButtonStyle.primary)
+        async def act_cb(bi): await bi.response.send_modal(ArbiterModal(self.character, self.user, self.area, {"prompt_action": txt}))
+        btn.callback = act_cb
+        view = discord.ui.View(timeout=120)
+        view.add_item(btn)
+        await interaction.edit_original_response(embed=discord.Embed(title=f"🔎 探索發現：{self.area.name}", description=txt, color=discord.Color.gold()), view=view)
 
     async def move_callback(self, interaction: discord.Interaction, dx: int, dy: int):
         from services.llm_service import LMStudioClient
@@ -337,26 +299,23 @@ class BuildingView(discord.ui.View):
         self.add_item(btn_back)
 
     async def talk_to_npc(self, interaction: discord.Interaction):
-        cost = self.building.talk_cost
-        if self.character.data.vitality.stamina < cost:
-            await interaction.response.send_message("❌ 體力不足。", ephemeral=True)
-            return
-        self.character.data.vitality.stamina -= cost
-        self.character.save()
-        await interaction.response.defer(ephemeral=True)
         from services.llm_service import LMStudioClient
-        llm = LMStudioClient()
-        from core.guild import GuildManager
-        is_rumor = random.random() < self.building.rumor_rate
-        target_rumor = await GuildManager.generate_rumor(self.character, *self.character.data.location, llm) if is_rumor else None
-        sys_prompt = f"扮演 NPC：{self.building.npc_name}。特質：{self.building.npc_traits}。資訊：{target_rumor if is_rumor else '無'}。70字內對話，只輸出說的話。"
-        try:
-            content = await llm.call("聊天", sys_prompt)
-            if is_rumor and target_rumor and target_rumor not in self.character.data.known_rumors:
-                self.character.data.known_rumors.append(target_rumor); self.character.save()
-            embed = discord.Embed(title=f"💬 與 {self.building.npc_name} 的對話", description=f"**{self.building.npc_name}**：「{content.strip()}」", color=discord.Color.blue())
-            await interaction.followup.send(embed=embed, ephemeral=True)
-        except Exception as e: await interaction.followup.send(f"❌ 錯誤: {e}", ephemeral=True)
+        from logic.workflows.exploration import npc_talk_workflow
+        
+        llm_client = LMStudioClient()
+        await interaction.response.defer(ephemeral=True)
+        
+        res = await npc_talk_workflow(self.character, self.building, llm_client)
+        if not res["success"]:
+            await interaction.followup.send(res["message"], ephemeral=True)
+            return
+            
+        embed = discord.Embed(
+            title=f"💬 與 {self.building.npc_name} 的對話", 
+            description=f"**{self.building.npc_name}**：「{res['dialogue']}」", 
+            color=discord.Color.blue()
+        )
+        await interaction.followup.send(embed=embed, ephemeral=True)
 
     async def report_quests(self, interaction: discord.Interaction): await interaction.response.send_message("🔍 檢查任務中... (開發中)", ephemeral=True)
     async def rank_up_action(self, interaction: discord.Interaction): await interaction.response.send_message("🎖️ 階級提升功能開發中。", ephemeral=True)
@@ -369,20 +328,9 @@ class BuildingView(discord.ui.View):
         await interaction.response.edit_message(content="📜 公會公告欄", embed=None, view=view)
 
     async def rest_action(self, interaction: discord.Interaction):
-        from core.constants import STAMINA_RESTORE_COST
-        today = datetime.now().strftime("%Y-%m-%d")
-        if self.character.data.last_free_rest_date != today:
-            self.character.data.last_free_rest_date = today
-            self.character.data.vitality.stamina = self.character.max_stamina
-            self.character.save()
-            await interaction.response.send_message("🍺 體力已補滿(今日免費)！", ephemeral=True)
-        elif self.character.data.gold >= STAMINA_RESTORE_COST:
-            self.character.data.gold -= STAMINA_RESTORE_COST
-            self.character.data.last_paid_rest_date = today
-            self.character.data.vitality.stamina = self.character.max_stamina
-            self.character.save()
-            await interaction.response.send_message(f"💰 支付 {STAMINA_RESTORE_COST}G，體力已補滿！", ephemeral=True)
-        else: await interaction.response.send_message("❌ 金幣不足或次數上限。", ephemeral=True)
+        from logic.workflows.exploration import rest_character_workflow
+        res = rest_character_workflow(self.character)
+        await interaction.response.send_message(res["message"], ephemeral=True)
 
     async def back_to_city(self, interaction: discord.Interaction):
         view = CityView(self.character, self.user, self.area)

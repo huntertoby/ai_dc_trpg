@@ -59,14 +59,14 @@ class QuestDetailView(discord.ui.View):
 
     @discord.ui.button(label="✅ 接受委託", style=discord.ButtonStyle.success)
     async def accept_quest(self, interaction: discord.Interaction, button: discord.ui.Button):
-        if self.quest.rank_value > self.character.rank_value:
-            await interaction.response.send_message("❌ 階級不足。", ephemeral=True)
-            return
-        if GuildManager.accept_quest(str(self.user.id), self.quest.id):
-            self.character.data.active_quests.append(self.quest); self.character.save()
-            await interaction.response.send_message(f"✅ 已領取：{self.quest.title}", ephemeral=True)
+        from logic.workflows.guild import accept_quest_workflow
+        res = accept_quest_workflow(self.character, self.quest, str(self.user.id))
+        
+        if res["success"]:
+            await interaction.response.send_message(res["message"], ephemeral=True)
             await interaction.message.edit(view=QuestBoardView(self.character, self.user, self.all_quests, self.building, self.area))
-        else: await interaction.response.send_message("❌ 領取失敗。", ephemeral=True)
+        else:
+            await interaction.response.send_message(res["message"], ephemeral=True)
 
     @discord.ui.button(label="🔙 返回列表", style=discord.ButtonStyle.secondary)
     async def back_to_list(self, interaction: discord.Interaction, button: discord.ui.Button):

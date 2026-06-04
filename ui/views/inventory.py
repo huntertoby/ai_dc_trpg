@@ -54,22 +54,27 @@ class InventoryView(discord.ui.View):
         await interaction.response.edit_message(embed=embed, view=self)
 
     async def equip_callback(self, interaction: discord.Interaction):
+        from logic.workflows.inventory import equip_item_workflow
         item = self.character.data.inventory[self.selected_item_idx]
-        try:
-            self.character.equip_item(item.name)
+        res = equip_item_workflow(self.character, item.name)
+        if res["success"]:
             self.selected_item_idx = -1
             self._update_components()
             await interaction.response.edit_message(embed=build_inventory_embed(self.character, self.user), view=self)
             await interaction.followup.send(f"✅ 成功裝備了 **{item.name}**！", ephemeral=True)
-        except Exception as e: await interaction.followup.send(f"❌ 裝備失敗: {e}", ephemeral=True)
+        else:
+            await interaction.followup.send(f"❌ 裝備失敗: {res['error']}", ephemeral=True)
 
     async def discard_callback(self, interaction: discord.Interaction):
-        item = self.character.data.inventory.pop(self.selected_item_idx)
-        self.character.save()
-        self.selected_item_idx = -1
-        self._update_components()
-        await interaction.response.edit_message(embed=build_inventory_embed(self.character, self.user), view=self)
-        await interaction.followup.send(f"🗑️ 已丟棄 **{item.name}**。", ephemeral=True)
+        from logic.workflows.inventory import discard_item_workflow
+        res = discard_item_workflow(self.character, self.selected_item_idx)
+        if res["success"]:
+            self.selected_item_idx = -1
+            self._update_components()
+            await interaction.response.edit_message(embed=build_inventory_embed(self.character, self.user), view=self)
+            await interaction.followup.send(f"🗑️ 已丟棄 **{res['item'].name}**。", ephemeral=True)
+        else:
+            await interaction.followup.send(f"❌ 丟棄失敗: {res['error']}", ephemeral=True)
 
     async def back_callback(self, interaction: discord.Interaction):
         from ui.views.hub import CharacterHubView
@@ -128,13 +133,16 @@ class UnequipView(discord.ui.View):
     async def unequip_callback(self, interaction: discord.Interaction):
         slot = interaction.data['values'][0]
         if slot == "none": return
-        try:
-            item = self.character.unequip_item(slot)
+        from logic.workflows.inventory import unequip_item_workflow
+        res = unequip_item_workflow(self.character, slot)
+        if res["success"]:
+            item = res["item"]
             if item:
                 self._update_select_menu()
                 await interaction.response.edit_message(embed=build_character_embed(self.character, self.user), view=self)
                 await interaction.followup.send(f"👕 已卸下 **{item.name}**。", ephemeral=True)
-        except Exception as e: await interaction.followup.send(f"❌ 卸下失敗: {e}", ephemeral=True)
+        else:
+            await interaction.followup.send(f"❌ 卸下失敗: {res['error']}", ephemeral=True)
 
     async def back_callback(self, interaction: discord.Interaction):
         from ui.views.hub import CharacterHubView

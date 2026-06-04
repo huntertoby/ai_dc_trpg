@@ -146,10 +146,13 @@ class CharacterSwitchView(discord.ui.View):
         return True
 
     async def select_callback(self, interaction: discord.Interaction):
-        CharacterRepository.set_active_character(str(self.user.id), interaction.data['values'][0])
-        char = Character.load(str(self.user.id))
-        hub_view = CharacterHubView(char, self.user)
-        await interaction.response.edit_message(content=None, embed=build_character_embed(char, self.user), view=hub_view)
+        from logic.workflows.hub import switch_character_workflow
+        char = switch_character_workflow(str(self.user.id), interaction.data['values'][0])
+        if char:
+            hub_view = CharacterHubView(char, self.user)
+            await interaction.response.edit_message(content=None, embed=build_character_embed(char, self.user), view=hub_view)
+        else:
+            await interaction.response.send_message("❌ 無法載入角色資料。", ephemeral=True)
 
     async def back_callback(self, interaction: discord.Interaction):
         char = Character.load(str(self.user.id))
@@ -193,7 +196,8 @@ class CharacterDeleteView(discord.ui.View):
             await interaction.response.send_message("❌ 請先選擇一個角色！", ephemeral=True)
             return
             
-        success = CharacterRepository.delete_character(str(self.user.id), self.selected_char)
+        from logic.workflows.hub import delete_character_workflow
+        success = delete_character_workflow(str(self.user.id), self.selected_char)
         if success:
             await interaction.response.edit_message(content=f"✅ 角色 **{self.selected_char}** 已成功刪除。", view=None)
         else:
