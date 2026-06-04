@@ -241,6 +241,8 @@ async def debug_equipment(
         else: stats_text += f"- {stat}: {int(val) if val == int(val) else val:+}\n"
     
     embed.add_field(name="✨ 平衡後數值", value=f"```md\n{stats_text or '*無屬性加成*'}```", inline=False)
+    if eq.special_effect:
+        embed.add_field(name="🔮 特殊效果", value=f"*{eq.special_effect}*", inline=False)
     
     user_id = str(interaction.user.id)
     char = Character.load(user_id)

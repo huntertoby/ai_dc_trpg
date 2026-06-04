@@ -66,3 +66,33 @@ class TestItemGenerator(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(eq.name, "神秘法劍")
         # Since INT is higher than STR, weapon_type should fall back/default to "法杖"
         self.assertEqual(eq.weapon_type, "法杖")
+
+    async def test_generate_t1_equipment_with_special_effect(self):
+        mock_llm = MagicMock()
+        mock_llm.call = AsyncMock(return_value='''
+        {
+            "name": "王者之劍",
+            "description": "傳奇帝王使用的誓約之劍",
+            "slot_type": "main_hand",
+            "tier": "T1",
+            "item_level": 10,
+            "special_effect": "誓約勝利之光：使你的物理攻擊額外附帶 20% 光屬性傷害。",
+            "bonuses": {
+                "STR": 20.0,
+                "crit_rate": 0.05
+            }
+        }
+        ''')
+
+        eq = await generate_equipment_by_ai(
+            description="王者之劍",
+            item_level=10,
+            tier="T1",
+            slot_type="main_hand",
+            llm_client=mock_llm
+        )
+
+        self.assertIsNotNone(eq)
+        self.assertEqual(eq.name, "王者之劍")
+        self.assertEqual(eq.tier, "T1")
+        self.assertEqual(eq.special_effect, "誓約勝利之光：使你的物理攻擊額外附帶 20% 光屬性傷害。")

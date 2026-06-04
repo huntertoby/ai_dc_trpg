@@ -24,6 +24,9 @@ async def generate_equipment_by_ai(
     from core.constants import WEAPON_TYPES
     weapon_list_str = ", ".join(WEAPON_TYPES.keys())
 
+    # 根據稀有度動態生成特殊效果的 JSON 範例值與引導说明
+    special_effect_example = "傳說特殊效果描述（例如：每次擊中敵人時，有 15% 機率觸發『餘燼爆發』，對目標造成等同於 2.0x 智力的火屬性傷害）" if tier == "T1" else ""
+
     system_prompt = f"""
     你是一個專業的 TRPG 數值設計師。請根據玩家的描述，設計一件裝備。
     你**必須**生成的裝備部位 (slot_type) 是：`{slot_type}`。
@@ -38,6 +41,13 @@ async def generate_equipment_by_ai(
        - **你只能從以下【合法附屬性】中挑選，嚴禁自創**：
          - `crit_rate` (爆擊), `evasion_rate` (閃避), `accuracy` (命中), `skill_power` (技威力), `tenacity` (韌性), `luck` (幸運)。
        - 請確保至少提供一條符合裝備敘述的合法附屬性。
+
+    **【傳說特效/特殊磁條規範 (僅限 T1)】**
+    1. 當稀有度為 `T1` 時，你**必須**為其設計一條強大、具備戰鬥機制感或獨特敘事感的「傳說特殊效果/特殊磁條」，填入 `special_effect` 欄位。例如：
+       - *「每次擊中敵人時，有 15% 機率觸發『餘燼爆發』，對目標造成等同於 2.0x 智力的火屬性傷害。」*
+       - *「當生命值低於 30% 時，立即獲得一個相當於最大生命值 50% 的護盾，冷卻時間為 3 回合。」*
+       - *「攻擊有機率附加『麥角灼燒』狀態，且對處於該狀態的目標，造成的傷害提高 15%。」*
+    2. **非 T1 階級（T2、T3、T4、T5）的裝備，`special_effect` 欄位必須為空字串 `""`**。
 
     **【武器類型與持握規範 (僅限武器)】**
     1. 如果 `{slot_type}` 是 `main_hand` 或 `off_hand`，請從下表挑選一個最適合的 `weapon_type`：
@@ -58,7 +68,7 @@ async def generate_equipment_by_ai(
     {{
         "name": "裝備名稱",
         "description": "一段帥氣的文字敘述",
-        "special_effect": "{'' if tier != 'T1' else '傳說特效描述'}", // 嚴格規定：僅 T1 階級可填寫特殊效果，其餘階級必須為空字串 ""
+        "special_effect": "{special_effect_example}",
         "slot_type": "{slot_type}",
         "tier": "{tier}",
         "item_level": {item_level},
