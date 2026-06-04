@@ -180,3 +180,7 @@ cython_debug/
 .cursorignore
 .cursorindexingignore
 /characters_db/
+
+# Ignore all files in area_db, but keep 0,0.json
+/area_db/*
+!/area_db/0,0.json
