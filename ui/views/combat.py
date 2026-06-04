@@ -66,13 +66,14 @@ class CombatView(discord.ui.View):
         return embed
 
     async def attack_select(self, interaction: discord.Interaction):
-        # 如果只有一個敵人，直接攻擊
-        alive_monsters = [i for i, m in enumerate(self.manager.monsters) if m["hp"] > 0]
-        if len(alive_monsters) == 1:
-            await self.execute_attack(interaction, alive_monsters[0])
-        else:
-            # 彈出選擇目標的選單 (這裡簡化，直接攻擊第一個活著的)
-            await self.execute_attack(interaction, alive_monsters[0])
+        # 取得存活敵人列表
+        targets = self.manager.get_valid_targets()
+        if not targets:
+            await interaction.response.send_message("❌ 戰場上沒有存活的目標！", ephemeral=True)
+            return
+        
+        # 預設直接攻擊第一個存活目標
+        await self.execute_attack(interaction, targets[0]["index"])
 
     async def execute_attack(self, interaction: discord.Interaction, target_idx: int):
         result = await self.manager.player_attack(target_idx)
@@ -81,7 +82,6 @@ class CombatView(discord.ui.View):
         if self.manager.is_finished and self.manager.winner == "player":
             await self._process_victory(interaction)
         else:
-            self.manager.next_turn()
             self._update_buttons()
             await interaction.response.edit_message(embed=self._build_combat_embed(), view=self)
 
@@ -100,7 +100,76 @@ class CombatView(discord.ui.View):
             await interaction.response.edit_message(embed=self._build_combat_embed(), view=self)
 
     async def skill_select(self, interaction: discord.Interaction):
-        await interaction.response.send_message("技能系統介接中...", ephemeral=True)
+        # 1. 取得角色擁有的技能
+        skills = self.character.data.abilities
+        if not skills:
+            await interaction.response.send_message("❌ 你目前沒有任何技能可以使用！", ephemeral=True)
+            return
+
+        # 2. 暫時清空按鈕，換成技能下拉選單與返回按鈕
+        self.clear_items()
+
+        # 建立下拉選單選項
+        options = []
+        for i, skill in enumerate(skills):
+            cost_parts = []
+            for k, v in skill.mechanics.cost.items():
+                if v > 0:
+                    cost_parts.append(f"{k}:{v}")
+            cost_str = ", ".join(cost_parts) if cost_parts else "無消耗"
+            
+            desc = f"[{cost_str}] {skill.description}"
+            if len(desc) > 100:
+                desc = desc[:97] + "..."
+                
+            options.append(discord.SelectOption(
+                label=skill.name,
+                value=str(i),
+                description=desc
+            ))
+
+        select = discord.ui.Select(placeholder="🔮 選擇要施放的技能...", options=options)
+
+        # 選擇技能後的 Callback
+        async def select_callback(select_interaction: discord.Interaction):
+            chosen_idx = int(select.values[0])
+            skill = skills[chosen_idx]
+
+            targets = self.manager.get_valid_targets()
+            if not targets:
+                await select_interaction.response.send_message("❌ 戰場上沒有存活的目標！", ephemeral=True)
+                return
+            
+            # 預設對第一個存活目標施放
+            target_idx = targets[0]["index"]
+
+            # 執行施放
+            res = await self.manager.cast_skill(skill, target_idx)
+            if not res["success"]:
+                await select_interaction.response.send_message(res["msg"], ephemeral=True)
+                return
+
+            self.current_msg = res["msg"]
+            self._update_buttons()
+
+            if self.manager.is_finished and self.manager.winner == "player":
+                await self._process_victory(select_interaction)
+            else:
+                await select_interaction.response.edit_message(embed=self._build_combat_embed(), view=self)
+
+        select.callback = select_callback
+        self.add_item(select)
+
+        # 建立返回按鈕
+        btn_back = discord.ui.Button(label="返回", style=discord.ButtonStyle.secondary)
+        async def back_callback(back_interaction: discord.Interaction):
+            self._update_buttons()
+            await back_interaction.response.edit_message(embed=self._build_combat_embed(), view=self)
+
+        btn_back.callback = back_callback
+        self.add_item(btn_back)
+
+        await interaction.response.edit_message(embed=self._build_combat_embed(), view=self)
 
     async def flee_attempt(self, interaction: discord.Interaction):
         from logic.workflows.combat import process_flee_workflow

@@ -97,6 +97,34 @@ class EquipmentBalancer:
 
         # 3. 最終清理：合併並徹底移除所有值為 0 的項
         final_bonuses = {**proposed_primary, **proposed_sub}
+        
+        # 針對武器動態加入 ATK 屬性，針對盾牌動態加入 p_def 屬性
+        if equipment.slot_type in ["main_hand", "off_hand"]:
+            is_shield = equipment.weapon_type in ["小盾", "巨盾"]
+            is_focus = equipment.weapon_type in ["法器", "魔導書"]
+            
+            if equipment.slot_type == "main_hand" or (equipment.slot_type == "off_hand" and not is_shield and not is_focus):
+                # 計算武器基礎 ATK
+                ilvl = equipment.item_level
+                tier_mults = {"T5": 1.0, "T4": 1.2, "T3": 1.5, "T2": 1.8, "T1": 2.2}
+                mult = tier_mults.get(equipment.tier, 1.0)
+                
+                if equipment.is_two_handed:
+                    atk_val = (15.0 + ilvl * 3.0) * mult
+                else:
+                    atk_val = (5.0 + ilvl * 1.5) * mult
+                final_bonuses["ATK"] = float(round(atk_val, 1))
+            elif is_shield:
+                # 計算盾牌基礎物理防禦
+                ilvl = equipment.item_level
+                tier_mults = {"T5": 1.0, "T4": 1.2, "T3": 1.5, "T2": 1.8, "T1": 2.2}
+                mult = tier_mults.get(equipment.tier, 1.0)
+                if equipment.weapon_type == "巨盾":
+                    def_val = (10.0 + ilvl * 2.0) * mult
+                else:
+                    def_val = (5.0 + ilvl * 1.0) * mult
+                final_bonuses["p_def"] = float(round(def_val, 1))
+
         equipment.bonuses = {k: v for k, v in final_bonuses.items() if v > 0}
         
         # 4. 特殊效果過濾：僅 T1 (傳說) 允許擁有特殊效果描述

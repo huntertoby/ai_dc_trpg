@@ -26,8 +26,8 @@ class TestSkillProcessor(unittest.TestCase):
         self.assertEqual(SkillProcessor.roll_dice("invalid"), 0)
 
     def test_validate_and_clamp_skill_single_hand(self):
-        # Tier T5: min divisor = 15.0
-        # If original divisor is 10.0, it should be clamped to 15.0
+        # Tier T5: min divisor = 12.0
+        # If original divisor is 10.0, it should be clamped to 12.0
         skill = Skill(
             name="火球", description="召喚小火球", tier="T5",
             mechanics=SkillMechanics(
@@ -36,11 +36,11 @@ class TestSkillProcessor(unittest.TestCase):
             )
         )
         clamped = SkillProcessor.validate_and_clamp_skill(skill)
-        self.assertEqual(clamped.mechanics.formula.divisor, 15.0)
+        self.assertEqual(clamped.mechanics.formula.divisor, 12.0)
 
     def test_validate_and_clamp_skill_aoe_tax(self):
-        # Tier T4: min divisor = 12.0
-        # If target_type is aoe, it gets 1.5x tax -> min divisor becomes 18.0
+        # Tier T4: min divisor = 10.0
+        # If target_type is aoe, it gets 1.5x tax -> min divisor becomes 15.0
         skill = Skill(
             name="烈焰雨", description="火焰降臨", tier="T4",
             mechanics=SkillMechanics(
@@ -49,7 +49,7 @@ class TestSkillProcessor(unittest.TestCase):
             )
         )
         clamped = SkillProcessor.validate_and_clamp_skill(skill)
-        self.assertEqual(clamped.mechanics.formula.divisor, 18.0)
+        self.assertEqual(clamped.mechanics.formula.divisor, 15.0)
 
     def test_calculate_base_value_multiplier(self):
         # Stat * (Dice / Divisor)
@@ -86,7 +86,8 @@ class TestSkillProcessor(unittest.TestCase):
         )
         char.total_stats = {"WIS": 15}
         
-        with patch("core.skill_processor.SkillProcessor.roll_dice", return_value=10):
+        with patch("core.skill_processor.SkillProcessor.roll_dice", return_value=10), \
+             patch("random.random", return_value=0.5):
             res = SkillProcessor.execute_skill(skill, char)
             self.assertEqual(res["skill_name"], "治療術")
             # 15 * (10 / 10.0) = 15.0

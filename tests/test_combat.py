@@ -117,3 +117,63 @@ class TestCombat(unittest.IsolatedAsyncioTestCase):
         self.assertIn("卡爾", summary)
         self.assertIn("野狼 A", summary)
         self.assertIn("野狼 B", summary)
+
+    @patch("random.randint", return_value=10)
+    @patch("random.random", return_value=0.5)
+    async def test_player_attack_default_target_and_turn_progression(self, mock_random, mock_randint):
+        cm = CombatManager(self.mock_char, self.monsters)
+        # Ensure it is player's turn initially for testing
+        cm.turn_order = [
+            {"type": "player", "speed": 10, "ref": self.mock_char},
+            {"type": "monster", "speed": 5, "ref": self.monsters[0], "index": 0}
+        ]
+        cm.current_turn_idx = 0
+        
+        # Test attack without passing target_idx (should target monster at index 0)
+        res = await cm.player_attack()
+        self.assertTrue(res["success"])
+        self.assertLess(self.monsters[0]["hp"], 30)
+        # Turn should have advanced to the monster
+        self.assertEqual(cm.get_current_entity()["type"], "monster")
+
+    @patch("core.skill_processor.SkillProcessor.execute_skill")
+    async def test_cast_skill_default_target(self, mock_execute):
+        from core.models import Skill, SkillMechanics, SkillFormula
+        cm = CombatManager(self.mock_char, self.monsters)
+        cm.turn_order = [
+            {"type": "player", "speed": 10, "ref": self.mock_char},
+            {"type": "monster", "speed": 5, "ref": self.monsters[0], "index": 0}
+        ]
+        cm.current_turn_idx = 0
+        
+        mock_execute.return_value = {"success": True, "final_value": 10, "logs": [], "control_flags": {}}
+        test_skill = Skill(
+            name="火球術",
+            description="射出火球",
+            tier="T5",
+            mechanics=SkillMechanics(
+                action_type="damage",
+                target_type="single",
+                cost={"MP": 5},
+                formula=SkillFormula(type="multiplier", base_stat="INT", divisor=10.0, dice="1d20")
+            )
+        )
+        
+        res = await cm.cast_skill(test_skill)
+        self.assertTrue(res["success"])
+        # Should execute skill targeting first alive monster (index 0)
+        mock_execute.assert_called_once()
+        self.assertEqual(mock_execute.call_args[0][2], self.monsters[0])
+
+    def test_get_valid_targets(self):
+        cm = CombatManager(self.mock_char, self.monsters)
+        # Initially both monsters are alive
+        targets = cm.get_valid_targets()
+        self.assertEqual(len(targets), 2)
+        
+        # Kill one monster
+        self.monsters[0]["hp"] = 0
+        targets = cm.get_valid_targets()
+        self.assertEqual(len(targets), 1)
+        self.assertEqual(targets[0]["index"], 1)
+        self.assertEqual(targets[0]["name"], "野狼 B")

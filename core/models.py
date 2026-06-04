@@ -149,6 +149,7 @@ class Vitality(BaseModel):
     max_stamina: int = 100    # 新增：最大精力
     sanity: int = 100
     max_sanity: int = 100
+    temp_hp: int = 0          # 新增：臨時生命（護盾）
 
 class SkillFormula(BaseModel):
     type: Literal["multiplier", "additive"] = "multiplier"

@@ -256,6 +256,23 @@ class Character:
                     total[stat] = total.get(stat, 0) + value
         return total
 
+    def update_vitality(self, hp=None, mp=None, sanity=None, stamina=None, temp_hp=None):
+        """
+        更新生命值等狀態值，並進行自動夾持，確保介於 0 與 最大值 之間。
+        """
+        v = self.data.vitality
+        if hp is not None:
+            v.hp = max(0, min(int(hp), self.max_hp))
+        if mp is not None:
+            v.mp = max(0, min(int(mp), self.max_mp))
+        if sanity is not None:
+            v.sanity = max(0, min(int(sanity), self.max_sanity))
+        if stamina is not None:
+            v.stamina = max(0, min(int(stamina), self.max_stamina))
+        if temp_hp is not None:
+            v.temp_hp = max(0, int(temp_hp))
+        self.save()
+
     def save(self):
         """同步最大屬性、執行修正、保存資料"""
         self.data.vitality.max_hp = self.max_hp
@@ -268,6 +285,7 @@ class Character:
         self.data.vitality.mp = min(self.data.vitality.mp, self.data.vitality.max_mp)
         self.data.vitality.sanity = min(self.data.vitality.sanity, self.data.vitality.max_sanity)
         self.data.vitality.stamina = min(self.data.vitality.stamina, self.data.vitality.max_stamina)
+        self.data.vitality.temp_hp = max(0, self.data.vitality.temp_hp)
         
         CharacterRepository.save(self.data, self.user_id)
 
@@ -320,16 +338,28 @@ class Character:
         m_def = (ts["WIS"] * 0.7) + (ts["CON"] * 0.2) + (ts["INT"] * 0.1) + lvl_bonus
         
         main_off = max(ts["DEX"], ts["INT"], ts["WIS"])
+        
+        # 雙曲漸近線遞減公式，防止後期屬性通膨，最大上限 0.99
+        raw_crit = (main_off * 0.005) + get_bonus("crit_rate")
+        crit_rate = min(0.99, 0.05 + 0.94 * (raw_crit / (raw_crit + 0.35)))
+        
+        raw_evasion = (ts["DEX"] * 0.008) + get_bonus("evasion_rate")
+        evasion_rate = min(0.99, 0.05 + 0.94 * (raw_evasion / (raw_evasion + 0.3)))
+        
+        raw_accuracy = (max(ts["DEX"], ts["WIS"]) * 0.01) + get_bonus("accuracy")
+        accuracy = min(0.99, 0.85 + 0.14 * (raw_accuracy / (raw_accuracy + 0.15)))
+        
         return {
             "p_def": int(p_def), 
             "m_def": int(m_def),
-            "crit_rate": 0.05 + (main_off * 0.005) + get_bonus("crit_rate"),
-            "evasion_rate": 0.05 + (ts["DEX"] * 0.008) + get_bonus("evasion_rate"),
-            "accuracy": 0.85 + (max(ts["DEX"], ts["WIS"]) * 0.01) + get_bonus("accuracy"),
+            "crit_rate": float(round(crit_rate, 4)),
+            "evasion_rate": float(round(evasion_rate, 4)),
+            "accuracy": float(round(accuracy, 4)),
             "skill_power": 1.0 + (ts["INT"] * 0.02) + get_bonus("skill_power"),
             "tenacity": int(ts["CON"] * 2 + get_bonus("tenacity")),
             "luck": int(1 + get_bonus("luck"))
         }
+
 
     @classmethod
     def load(cls, user_id: str):
