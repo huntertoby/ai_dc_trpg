@@ -48,32 +48,24 @@ class GuildManager:
 
     @classmethod
     async def generate_daily_quests(cls, llm_client) -> List[QuestSchema]:
-        """呼叫 AI 生成每日任務"""
+        """呼叫 AI 生成每日任務，並根據座標距離調整獎勵"""
         system_prompt = f"""
         你是一個 TRPG 冒險者公會的任務秘書。請為佈告欄生成 10 個多樣化的任務。
         
-        **【行情參考】**
-        E級 (新手): 簡單雜事, D級 (正式): 野外討伐, C級: 地區威脅。
+        **【任務階級與區域指引】**
+        - E/D 級 (新手/正式): 目標範圍 (0,0) 周邊 0-7 格。
+        - C/B 級 (精英/英雄): 目標範圍 8-15 格。
+        - A/S 級 (傳奇/神話): 目標範圍 16 格以外。
         
         **【結構規則】**
-        1. 每個任務必須包含：標題、敘事描述、階級(E/D/C)、目標類型(kill/collect/explore)。
-        2. 獎勵請留空或設為 0，系統會自動填入數值。
-        3. 任務目標要有具體的座標(x,y)，範圍在 (0,0) 周邊 5 格內。
+        1. 每個任務必須包含：標題、敘事描述、階級(E/D/C/B/A/S)、目標類型(kill/collect/explore)。
+        2. 任務目標要有具體的座標(x,y)，請嚴格遵守上述【區域指引】分配座標。
+        3. 越高階級的任務，敘事應越具備地區特色（參考：Tier 1 平常, Tier 2 異變, Tier 3 禁忌）。
         
         回應請「只」輸出 JSON 列表。
-        結構範例：
-        [
-          {{
-            "id": "q_001",
-            "title": "標題",
-            "description": "敘事...",
-            "rank_required": "E",
-            "objectives": [{{ "type": "kill", "target_id": "史萊姆", "count": 5, "location": [1, 0] }}]
-          }}
-        ]
         """
         
-        prompt = "請生成 10 個精彩的冒險公會委託任務。"
+        prompt = "請根據區域指引生成 10 個涵蓋不同難度的冒險公會委託任務。"
         
         try:
             response = await llm_client.call(prompt, system_prompt)
@@ -89,11 +81,22 @@ class GuildManager:
                 rank = q_data.get("rank_required", "E")
                 table = RANK_REWARD_TABLE.get(rank, RANK_REWARD_TABLE["E"])
                 
+                # 計算座標距離加成
+                objs = q_data.get("objectives", [])
+                max_dist = 0
+                for obj in objs:
+                    loc = obj.get("location", [0, 0])
+                    dist = max(abs(loc[0]), abs(loc[1]))
+                    max_dist = max(max_dist, dist)
+                
+                # 距離紅利係數 (每 10 單位增加 50% 獎勵)
+                dist_bonus = 1 + (max_dist / 20)
+                
                 q_data["id"] = f"Q-{int(time.time())}-{i}"
                 q_data["rewards"] = {
-                    "gold": (table["gold"][0] + table["gold"][1]) // 2,
-                    "exp": (table["exp"][0] + table["exp"][1]) // 2,
-                    "reputation": (table["reputation"][0] + table["reputation"][1]) // 2
+                    "gold": int(((table["gold"][0] + table["gold"][1]) // 2) * dist_bonus),
+                    "exp": int(((table["exp"][0] + table["exp"][1]) // 2) * dist_bonus),
+                    "reputation": int(((table["reputation"][0] + table["reputation"][1]) // 2) * dist_bonus)
                 }
                 final_quests.append(QuestSchema(**q_data))
                 
@@ -101,6 +104,62 @@ class GuildManager:
         except Exception as e:
             print(f"任務生成失敗: {e}")
             return []
+
+    @classmethod
+    async def generate_rumor(cls, character, x: int, y: int, llm_client) -> Optional[str]:
+        """
+        根據玩家座標、等級與屬性生成傳聞。
+        """
+        import random
+        from core.world import WorldManager
+        
+        # 1. 判定距離階級 (70% 近, 20% 中, 10% 遠)
+        roll = random.random()
+        if roll < 0.70:
+            target_dist = random.randint(1, 7)
+        elif roll < 0.90:
+            target_dist = random.randint(8, 15)
+        else:
+            target_dist = random.randint(16, 25)
+            
+        # 2. 隨機選定目標座標
+        tx = x + random.choice([-target_dist, target_dist])
+        ty = y + random.randint(-target_dist, target_dist)
+        if random.random() > 0.5: tx, ty = ty, tx
+        
+        diff = WorldManager.get_difficulty_settings(tx, ty)
+        
+        # 3. 屬性影響判定 (CHA/WIS)
+        stats = character.total_stats
+        cha = stats["CHA"]
+        wis = stats["WIS"]
+        
+        system_prompt = f"""
+        你是一個 TRPG 的酒館流言家。請為座標 ({tx}, {ty}) 生成一條傳聞。
+        
+        **【環境背景】**
+        - 地區等級: Lv.{diff['base_level']} | 階級: {diff['tier_name']}
+        - 玩家目前所在: ({x}, {y})
+        
+        # **【資訊完整度 (受魅力 {cha} 影響)】**
+        # - 如果魅力 >= 15，請給出精確座標 ({tx}, {ty})。
+        # - 如果魅力 < 15，請模糊描述方向。
+        # 
+        # **【資訊深度 (受智慧 {wis} 影響)】**
+        # - 如果智慧 >= 15，請提到怪物的弱點或隱藏的獎勵類型。
+        # - 如果智慧 < 15，只提到一些表面的傳聞。
+        
+        回應請直接輸出傳聞敘事，長度 50 字內，不要括號。
+        """
+        
+        prompt = f"生成一條關於座標 ({tx}, {ty}) 的流言。"
+        
+        try:
+            rumor = await llm_client.call(prompt, system_prompt)
+            return rumor.strip()
+        except Exception as e:
+            print(f"流言生成失敗: {e}")
+            return None
 
     @classmethod
     def accept_quest(cls, user_id: str, quest_id: str) -> bool:

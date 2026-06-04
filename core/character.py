@@ -1,13 +1,57 @@
 # core/character.py
-from core.models import CharacterSchema, Item, Equipment, StatusEffect
+from core.models import CharacterSchema, Item, Equipment, StatusEffect, LogEntry
 from db.storage import CharacterRepository
 from core.constants import RANK_ORDER
-from typing import Union
+from typing import Union, Literal
+from datetime import datetime
 
 class Character:
     def __init__(self, data: CharacterSchema, user_id: str):
         self.data = data
         self.user_id = user_id
+
+    def add_log(self, log_type: Literal["GRIND", "LEGEND", "ORDEAL", "TRIFLE", "MILESTONE"], content: str):
+        """新增一條冒險紀錄"""
+        date_str = datetime.now().strftime("%Y-%m-%d")
+        entry = LogEntry(date=date_str, type=log_type, content=content)
+        self.data.adventure_logs.append(entry)
+        
+        # 限制日誌長度，保留最近的 50 條
+        if len(self.data.adventure_logs) > 50:
+            self.data.adventure_logs.pop(0)
+        self.save()
+
+    def check_evolution_triggers(self) -> bool:
+        """檢查是否達成性格演化/檢查的觸發條件"""
+        # 1. 每 10 級觸發 (適配 100 滿等)
+        level_trigger = (self.data.level - self.data.last_personality_check_level) >= 10
+        # 2. 每 20 次 TRPG 事件觸發
+        event_trigger = (self.data.total_trpg_events - self.data.last_personality_check_events) >= 20
+        
+        return level_trigger or event_trigger
+
+    def mark_evolution_checked(self):
+        """標記目前已完成演化檢查，重置計數基準"""
+        self.data.last_personality_check_level = self.data.level
+        self.data.last_personality_check_events = self.data.total_trpg_events
+        self.save()
+
+    @property
+    def reputation_title(self) -> str:
+        """根據等級與成就決定冒險者稱號 (適配 100 滿等)"""
+        lvl = self.data.level
+        if lvl >= 100: return "👑 登峰造極"
+        if lvl >= 91: return "✨ 傳奇英雄"
+        if lvl >= 71: return "🌟 名震一方"
+        if lvl >= 46: return "🎖️ 資深冒險者"
+        if lvl >= 26: return "🛡️ 嶄露頭角"
+        if lvl >= 11: return "⚔️ 熟練的新手"
+        return "🌱 初出茅廬"
+
+    def add_trpg_event(self):
+        """增加經歷過的 TRPG 事件計數"""
+        self.data.total_trpg_events += 1
+        self.save()
 
     @property
     def rank_value(self) -> int:
@@ -59,18 +103,45 @@ class Character:
         """升級所需的經驗值：指數成長公式 100 * (等級^1.5)"""
         return int(100 * (self.data.level ** 1.5))
 
+    @property
+    def stat_modifiers(self) -> dict:
+        """計算屬性修正值 (用於 1d20 檢定) | 公式: 屬性 / 5"""
+        ts = self.total_stats
+        return {k: v // 5 for k, v in ts.items()}
+
     def add_item(self, item: Union[Item, Equipment, str], description: str = "", quantity: int = 1):
-        """新增物品到背包"""
-        if isinstance(item, (Item, Equipment)):
-            if not isinstance(item, Equipment):
-                for inv_item in self.data.inventory:
-                    if inv_item.name == item.name and not isinstance(inv_item, Equipment):
-                        inv_item.quantity += item.quantity
-                        self.save()
-                        return
+        """新增物品到背包 (支援標準化堆疊邏輯)"""
+        if isinstance(item, str):
+            item = Item(name=item, description=description, quantity=quantity)
+
+        # 如果是裝備，直接加入
+        if isinstance(item, Equipment):
             self.data.inventory.append(item)
-        else:
-            self.data.inventory.append(Item(name=item, description=description, quantity=quantity))
+            self.save()
+            return
+
+        # 嘗試堆疊
+        for inv_item in self.data.inventory:
+            if isinstance(inv_item, Equipment):
+                continue
+            
+            can_stack = False
+            # 優先比對標準化屬性 (material_type + tier + source_id)
+            if item.material_type and inv_item.material_type:
+                if (item.material_type == inv_item.material_type and 
+                    item.tier == inv_item.tier and 
+                    item.source_id == inv_item.source_id):
+                    can_stack = True
+            # 備援：比對名稱 (傳統物品)
+            elif item.name == inv_item.name:
+                can_stack = True
+                
+            if can_stack:
+                inv_item.quantity += item.quantity
+                self.save()
+                return
+
+        self.data.inventory.append(item)
         self.save()
 
     def equip_item(self, item_name: str):
@@ -174,6 +245,7 @@ class Character:
         return total
 
     def save(self):
+        """同步最大屬性、執行修正、保存資料"""
         self.data.vitality.max_hp = self.max_hp
         self.data.vitality.max_mp = self.max_mp
         self.data.vitality.max_sanity = self.max_sanity
@@ -186,6 +258,40 @@ class Character:
         self.data.vitality.stamina = min(self.data.vitality.stamina, self.data.vitality.max_stamina)
         
         CharacterRepository.save(self.data, self.user_id)
+
+    def tick_status(self):
+        """主動觸發回合狀態更新 (應在重大行動如移動、探索後呼叫)"""
+        from core.status_processor import StatusProcessor
+        StatusProcessor.tick_turns(self.data)
+        self.save()
+
+    def check_daily_reset(self) -> bool:
+        """主動觸發每日重置檢查"""
+        from core.status_processor import DailyResetManager
+        res = DailyResetManager.check_and_reset(self.data)
+        if res:
+            self.save()
+        return res
+
+    def add_exp(self, amount: int) -> bool:
+        """增加經驗值，並處理升級邏輯。回傳 True 代表有升級。"""
+        self.data.exp += amount
+        leveled_up = False
+        
+        while self.data.exp >= self.xp_required:
+            self.data.exp -= self.xp_required
+            self.data.level += 1
+            self.data.stat_points += 5
+            leveled_up = True
+            
+        if leveled_up:
+            # 紀錄升級日誌
+            self.add_log("GRIND", f"等級提升至 Lv.{self.data.level}！體力與生命值已完全恢復。")
+            # 升級時全恢復
+            self.heal_all()
+        else:
+            self.save()
+        return leveled_up
 
     @property
     def combat_stats(self) -> dict:

@@ -173,9 +173,12 @@ def build_skills_embed(character: Character, user: discord.Member) -> discord.Em
 
 def build_area_embed(area: 'AreaSchema', character: Character) -> discord.Embed:
     """生成地區/城市詳細視圖"""
+    from core.world import WorldManager
+    diff = WorldManager.get_difficulty_settings(int(area.id.split(",")[0]), int(area.id.split(",")[1]))
+    
     embed = discord.Embed(
-        title=f"🏙️ {area.name}",
-        description=area.description,
+        title=f"🏙️ {area.name} (Lv.{diff['base_level']})",
+        description=f"**地理階級：{diff['tier_name']} (Tier {diff['tier']})**\n\n{area.description}",
         color=discord.Color.gold() if area.type == "city" else discord.Color.green()
     )
     

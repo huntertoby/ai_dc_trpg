@@ -76,6 +76,9 @@ async def show_character(interaction: discord.Interaction):
         await interaction.response.send_message("❌ 你還沒有建立角色喔！請先使用 `/生成角色` 踏上旅程。", ephemeral=True)
         return
 
+    # 觸發每日重置檢查
+    char.check_daily_reset()
+
     # 獲取使用者設定
     settings = CharacterRepository.get_user_settings(user_id)
     is_ephemeral = not settings.get("public_mode", False)
@@ -317,6 +320,7 @@ async def help_command(interaction: discord.Interaction):
             "- 🎒 **背包**：查看物品、穿戴/更換裝備、丟棄廢物。\n"
             "- 📜 **技能**：查看你的技能倍率與詳細機制。\n"
             "- 👕 **脫裝**：快速卸下已裝備的部位。\n"
+            "- 🗺️ **探索**：查看目前位置、移動或進行深度探索。\n"
             "- 🎭 **換角**：在多個角色之間快速切換。"
         ),
         inline=False

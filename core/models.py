@@ -20,7 +20,9 @@ class Equipment(Item):
 class StatusEffect(BaseModel):
     name: str
     description: str = ""
-    duration: int = 0
+    duration_type: Literal["turns", "days"] = "turns" # 狀態週期：回合(行動) 或 天數
+    duration: int = 0                                 # 剩餘數值
+    start_date: Optional[str] = None                  # 針對天數制：開始日期 (YYYY-MM-DD)
     bonuses: Dict[str, float] = Field(default_factory=dict)
 
 class BuildingSchema(BaseModel):
@@ -38,6 +40,16 @@ class AreaSchema(BaseModel):
     name: str
     type: str                 # 'city', 'wilderness', 'dungeon'
     description: str
+    
+    # --- 新增：大世界生態與一致性系統 ---
+    ecology_tags: List[str] = []      # ["亡靈", "墓園", "寒冷"]
+    dominant_species: List[str] = []  # ["Skeleton", "Zombie"]
+    discovered_variants: List[str] = [] # 紀錄已生成的具體怪名 (如 "冰霜骷髏")
+    # loot_pool 紀錄物種與其掉落物的關聯: {"Skeleton": [{"name": "頭骨", "material_type": "bone", "tier": "T5"}]}
+    loot_pool: Dict[str, List[Dict[str, Any]]] = Field(default_factory=dict)
+    threat_level: float = 0.0         # 區域壓力/威脅值
+    # -----------------------------------
+
     landmarks: List[BuildingSchema] = [] # 地標或興趣點 (原名 buildings)
     base_level: int = 1
     connections: List[str] = [] # 相鄰地區的 ID
@@ -149,6 +161,11 @@ class Skill(BaseModel):
     tier: Literal["T1", "T2", "T3", "T4", "T5"] = "T5" # 技能階級 (T5 為最基礎)
     mechanics: SkillMechanics
 
+class LogEntry(BaseModel):
+    date: str                  # YYYY-MM-DD
+    type: Literal["GRIND", "LEGEND", "ORDEAL", "TRIFLE", "MILESTONE"]
+    content: str               # 簡短描述
+
 class CharacterSchema(BaseModel):
     character_id: str
     name: str
@@ -176,7 +193,15 @@ class CharacterSchema(BaseModel):
     reputation: int = 0                                         # 新增：名聲值
     active_quests: List[QuestSchema] = []                        # 新增：進行中的任務
     known_rumors: List[str] = []                                # 新增：已獲取的情報/傳聞
+    last_daily_reset_date: Optional[str] = None                 # 新增：上次每日重置日期 (YYYY-MM-DD)
     last_free_rest_date: Optional[str] = None                   # 新增：上次免費休息日期 (YYYY-MM-DD)
     last_paid_rest_date: Optional[str] = None                   # 新增：上次付費休息日期 (YYYY-MM-DD)
+
+    # --- 新增：冒險生涯回溯系統 ---
+    adventure_logs: List[LogEntry] = Field(default_factory=list)
+    total_trpg_events: int = 0                                  # 經歷過的 AI 仲裁事件總數
+    last_personality_check_level: int = 1                       # 上次進行性格檢查的等級
+    last_personality_check_events: int = 0                      # 上次進行性格檢查時的事件數
+    # -----------------------------
 
 

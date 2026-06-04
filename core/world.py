@@ -45,11 +45,41 @@ class WorldManager:
             f.write(area.model_dump_json(indent=4))
 
     @classmethod
+    def get_difficulty_settings(cls, x: int, y: int) -> dict:
+        """
+        根據座標計算難度設定，包含基礎等級與地理階級 (Tier)
+        """
+        dist = max(abs(x), abs(y))
+        if dist == 0:
+            return {"base_level": 1, "tier": 1, "tier_name": "文明樞紐", "dist": 0}
+        
+        # 指數成長公式：讓 20 步左右達到 Lv.100
+        # 5步約 19, 10步約 45, 15步約 74, 20步約 105
+        base_level = int(dist ** 1.4) + (dist * 2)
+        base_level = min(100, max(1, base_level))
+        
+        # 地理階級判定
+        if dist <= 5:
+            tier = 1
+            tier_name = "文明邊緣"
+        elif dist <= 12:
+            tier = 2
+            tier_name = "異變荒野"
+        else:
+            tier = 3
+            tier_name = "禁忌區域"
+            
+        return {
+            "base_level": base_level,
+            "tier": tier,
+            "tier_name": tier_name,
+            "dist": dist
+        }
+
+    @classmethod
     def get_base_level(cls, x: int, y: int) -> int:
         """根據座標計算該地區的基礎等級"""
-        dist = max(abs(x), abs(y))
-        if dist == 0: return 1
-        return dist * 2
+        return cls.get_difficulty_settings(x, y)["base_level"]
 
     @classmethod
     async def move_character(cls, character: 'Character', dx: int, dy: int, llm_client) -> str:
