@@ -7,6 +7,9 @@ class Item(BaseModel):
     description: str = ""
     quantity: int = 1
     item_type: str = "material"
+    material_type: Optional[str] = None
+    tier: Optional[str] = None
+    source_id: Optional[str] = None
 
 class Equipment(Item):
     item_type: Literal["equipment"] = "equipment"

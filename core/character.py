@@ -67,7 +67,8 @@ class Character:
         status_bonuses = {}
         for effect in self.data.status_effects:
             for stat, val in effect.bonuses.items():
-                status_bonuses[stat] = status_bonuses.get(stat, 0) + val
+                k = stat.upper()
+                status_bonuses[k] = status_bonuses.get(k, 0) + val
 
         def get_stat(name: str) -> int:
             return getattr(base, name) + int(bonuses.get(name, 0)) + int(status_bonuses.get(name, 0))
