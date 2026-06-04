@@ -222,7 +222,7 @@ async def debug_equipment(
     description: str, 
     level: int, 
     tier: Literal["T1", "T2", "T3", "T4", "T5"],
-    slot: Literal["head", "shoulders", "cloak", "chest", "hands", "legs", "feet", "main_hand", "off_hand", "trinket_1", "trinket_2", "ring_1", "ring_2"] = "main_hand"
+    slot: Literal["head", "shoulders", "cloak", "chest", "hands", "legs", "feet", "main_hand", "off_hand", "trinket_1", "trinket_2", "ring"] = "main_hand"
 ):
     await interaction.response.defer(ephemeral=True)
     eq = await generate_equipment_by_ai(description, level, tier, slot, llm_client)

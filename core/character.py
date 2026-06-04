@@ -159,11 +159,22 @@ class Character:
             raise ValueError(f"背包裡找不到可裝備的物品: {item_name}")
 
         slot = found_item.slot_type
-        if not hasattr(self.data.equipment_slots, slot):
-            raise ValueError(f"錯誤：系統不支援 {slot} 這種裝備位置。")
+        # 處理戒指動態槽位對應 (ring -> ring_1 / ring_2)
+        if slot == "ring":
+            if getattr(self.data.equipment_slots, "ring_1") is None:
+                actual_slot = "ring_1"
+            elif getattr(self.data.equipment_slots, "ring_2") is None:
+                actual_slot = "ring_2"
+            else:
+                actual_slot = "ring_1"
+        else:
+            actual_slot = slot
+
+        if not hasattr(self.data.equipment_slots, actual_slot):
+            raise ValueError(f"錯誤：系統不支援 {actual_slot} 這種裝備位置。")
 
         # --- 雙手武器特殊邏輯 ---
-        if slot == "main_hand":
+        if actual_slot == "main_hand":
             if found_item.is_two_handed:
                 # 穿上雙手武器：卸下副手
                 old_off = self.data.equipment_slots.off_hand
@@ -176,7 +187,7 @@ class Character:
                 self.data.inventory.append(old_off)
                 self.data.equipment_slots.off_hand = None
 
-        if slot == "off_hand":
+        if actual_slot == "off_hand":
             # 穿上副手：若主手是雙手武器，則卸下主手
             old_main = self.data.equipment_slots.main_hand
             if old_main and old_main.is_two_handed:
@@ -184,11 +195,11 @@ class Character:
                 self.data.equipment_slots.main_hand = None
 
         # 替換目標槽位
-        old_eq = getattr(self.data.equipment_slots, slot)
+        old_eq = getattr(self.data.equipment_slots, actual_slot)
         if old_eq:
             self.data.inventory.append(old_eq)
         
-        setattr(self.data.equipment_slots, slot, found_item)
+        setattr(self.data.equipment_slots, actual_slot, found_item)
         self.data.inventory.pop(found_idx)
         self.save()
 

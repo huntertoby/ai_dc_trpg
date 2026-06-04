@@ -109,6 +109,34 @@ class TestCharacter(unittest.TestCase):
         self.assertIsNone(self.schema.equipment_slots.main_hand)
         self.assertEqual(self.schema.inventory[0].name, "鐵劍")
 
+    def test_equip_ring_dynamic_slots(self):
+        char = Character(self.schema, "user_1")
+        
+        # 1. Equip first ring when both are empty -> should go to ring_1
+        ring1 = Equipment(name="戒指A", slot_type="ring", tier="T4", bonuses={"STR": 2.0})
+        self.schema.inventory.append(ring1)
+        char.equip_item("戒指A")
+        self.assertEqual(self.schema.equipment_slots.ring_1.name, "戒指A")
+        self.assertIsNone(self.schema.equipment_slots.ring_2)
+        self.assertEqual(len(self.schema.inventory), 0)
+
+        # 2. Equip second ring when ring_1 is occupied -> should go to ring_2
+        ring2 = Equipment(name="戒指B", slot_type="ring", tier="T4", bonuses={"STR": 3.0})
+        self.schema.inventory.append(ring2)
+        char.equip_item("戒指B")
+        self.assertEqual(self.schema.equipment_slots.ring_1.name, "戒指A")
+        self.assertEqual(self.schema.equipment_slots.ring_2.name, "戒指B")
+        self.assertEqual(len(self.schema.inventory), 0)
+
+        # 3. Equip third ring when both are occupied -> should replace ring_1, and ring_1's old item goes back to inventory
+        ring3 = Equipment(name="戒指C", slot_type="ring", tier="T4", bonuses={"STR": 4.0})
+        self.schema.inventory.append(ring3)
+        char.equip_item("戒指C")
+        self.assertEqual(self.schema.equipment_slots.ring_1.name, "戒指C")
+        self.assertEqual(self.schema.equipment_slots.ring_2.name, "戒指B")
+        self.assertEqual(len(self.schema.inventory), 1)
+        self.assertEqual(self.schema.inventory[0].name, "戒指A")
+
     def test_equip_two_handed_weapon_un_equips_offhand(self):
         char = Character(self.schema, "user_1")
         shield = Equipment(name="小盾", slot_type="off_hand", tier="T4", bonuses={"CON": 2.0})
