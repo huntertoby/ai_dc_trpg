@@ -23,7 +23,7 @@ class EquipmentBalancer:
         "crit_rate": 1000.0,    # 1% = 10 點
         "evasion_rate": 1000.0, # 1% = 10 點
         "accuracy": 1000.0,     # 1% = 10 點
-        "cast_speed": 50.0,     # +0.1 = 5 點
+        "skill_power": 1000.0,  # 1% = 10 點
         "tenacity": 1.0,        # 1 點 = 1 點
         "luck": 5.0             # 1 點 = 5 點
     }
@@ -56,6 +56,7 @@ class EquipmentBalancer:
 
         # 1. 處理主屬性 (Primary)
         if not proposed_primary:
+            # 根據部位給予預設主屬性 (防具現在統一強化 CON 作為生存核心)
             proposed_primary = {"CON": budgets["primary"]}
         
         p_cost = sum(proposed_primary.values())
@@ -98,6 +99,10 @@ class EquipmentBalancer:
         final_bonuses = {**proposed_primary, **proposed_sub}
         equipment.bonuses = {k: v for k, v in final_bonuses.items() if v > 0}
         
+        # 4. 特殊效果過濾：僅 T1 (傳說) 允許擁有特殊效果描述
+        if equipment.tier != "T1":
+            equipment.special_effect = ""
+            
         return equipment
 
     @classmethod

@@ -38,7 +38,7 @@ class WorldGenerator:
         2. **敘事描述**：描述環境氣氛、視覺細節。
         3. **生態系 (Ecology)**：
            - **ecology_tags**: 賦予 2~3 個環境標籤 (如: ["亡靈", "陰暗", "腐敗"])。
-           - **dominant_species**: 賦予此地區的主要核心物種 (如: ["Skeleton"])。
+           - **dominant_species**: 賦予此地區的主要核心物種，請務必使用中文名 (如: ["骷髏兵", "食屍鬼", "幽魂"])。
         4. **地標 (Landmark)**：
            - 此座標是否包含可互動地標：{has_landmark}
 

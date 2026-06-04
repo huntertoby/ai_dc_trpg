@@ -84,7 +84,13 @@ class InventoryView(discord.ui.View):
             color = EquipmentBalancer.get_tier_color(item.tier)
         embed = discord.Embed(title=f"📦 物品詳情：{item.name}", description=item.description, color=color)
         if is_eq:
-            stats_text = "".join([f"- {s}: {v*100 if 'rate' in s else v:+.1f if 'rate' in s else '+'}\n" for s, v in item.bonuses.items()])
+            stats_text = ""
+            for s, v in item.bonuses.items():
+                if any(x in s for x in ["rate", "accuracy", "skill_power"]):
+                    stats_text += f"- {s}: {v*100:.1f}%\n"
+                else:
+                    stats_text += f"- {s}: {int(v) if v == int(v) else v:+}\n"
+            
             embed.add_field(name="✨ 屬性加成", value=f"```md\n{stats_text or '無'}```", inline=False)
             if item.special_effect: embed.add_field(name="🔮 特殊效果", value=f"*{item.special_effect}*", inline=False)
             embed.set_footer(text=f"階級: {item.tier} | 等級需求: Lv.{item.item_level} | 部位: {item.slot_type}")

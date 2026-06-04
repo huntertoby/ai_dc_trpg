@@ -16,6 +16,12 @@ class Equipment(Item):
     is_two_handed: bool = False                      # 是否為雙手武器
     special_effect: str = ""                         # 特殊描述/技能預留位
     bonuses: Dict[str, float] = Field(default_factory=dict)
+    
+    # --- 戰鬥系統擴充 ---
+    weapon_type: Optional[str] = None                # 'sword', 'bow', 'staff', 'dagger', etc.
+    damage_type: Literal["physical", "magical"] = "physical"
+    scaling_stat: Literal["STR", "DEX", "INT", "WIS", "CHA", "CON"] = "STR"
+    # ------------------
 
 class StatusEffect(BaseModel):
     name: str
@@ -43,8 +49,8 @@ class AreaSchema(BaseModel):
     
     # --- 新增：大世界生態與一致性系統 ---
     ecology_tags: List[str] = []      # ["亡靈", "墓園", "寒冷"]
-    dominant_species: List[str] = []  # ["Skeleton", "Zombie"]
-    discovered_variants: List[str] = [] # 紀錄已生成的具體怪名 (如 "冰霜骷髏")
+    dominant_species: List[str] = []  # ["骷髏兵", "食屍鬼"]
+    discovered_variants: List[Dict[str, Any]] = [] # 紀錄已生成的具體怪名與特徵: [{"name": "殘缺的銀狼", "rank": "精英", "trait": "撕裂傷口"}]
     # loot_pool 紀錄物種與其掉落物的關聯: {"Skeleton": [{"name": "頭骨", "material_type": "bone", "tier": "T5"}]}
     loot_pool: Dict[str, List[Dict[str, Any]]] = Field(default_factory=dict)
     threat_level: float = 0.0         # 區域壓力/威脅值
@@ -106,8 +112,9 @@ class CombatAttributes(BaseModel):
     crit_rate: float = Field(default=0.05, ge=0.0, le=1.0)
     evasion_rate: float = Field(default=0.05, ge=0.0, le=1.0)
     accuracy: float = Field(default=0.95, ge=0.0, le=1.0)
-    cast_speed: float = Field(default=1.0, ge=0.0)
+    skill_power: float = Field(default=0.0, ge=0.0)
     tenacity: int = Field(default=0, ge=0)
+
     luck: int = Field(default=1, ge=0)
 
 class EquipmentSlots(BaseModel):

@@ -20,20 +20,35 @@ async def generate_equipment_by_ai(
     budgets = EquipmentBalancer.calculate_budgets(item_level, tier)
     affix_slots = EquipmentBalancer.AFFIX_SLOTS.get(tier, 0)
 
+    # 獲取合法武器類型列表供 AI 參考
+    from core.constants import WEAPON_TYPES
+    weapon_list_str = ", ".join(WEAPON_TYPES.keys())
+
     system_prompt = f"""
     你是一個專業的 TRPG 數值設計師。請根據玩家的描述，設計一件裝備。
-    
+    你**必須**生成的裝備部位 (slot_type) 是：`{slot_type}`。
+
     **【雙軌預算規範 (務必遵守)】**
     1. 裝備等級 (ILv): {item_level} | 稀有度: {tier}
     2. 主屬性預算 (STR, DEX, CON, INT, WIS, CHA): {budgets['primary']} 點。
+       - **防護具 (衣物、盔甲、盾牌)** 務必將大部分主預算分配給 `CON` (體質)，這是生存核心。
        - 請務必將預算「用好用滿」，不要保守。
     3. 附屬性預算 (戰鬥/特殊屬性): {budgets['sub']} 點。
        - 你的附屬性槽位上限為: {affix_slots} 條。
        - **你只能從以下【合法附屬性】中挑選，嚴禁自創**：
-         - `crit_rate` (爆擊), `evasion_rate` (閃避), `accuracy` (命中), `cast_speed` (施法速度), `tenacity` (韌性), `luck` (幸運)。
+         - `crit_rate` (爆擊), `evasion_rate` (閃避), `accuracy` (命中), `skill_power` (技威力), `tenacity` (韌性), `luck` (幸運)。
        - 請確保至少提供一條符合裝備敘述的合法附屬性。
 
-    
+    **【武器類型與持握規範 (僅限武器)】**
+    1. 如果 `{slot_type}` 是 `main_hand` 或 `off_hand`，請從下表挑選一個最適合的 `weapon_type`：
+       {weapon_list_str}
+       **手部位置通常應強化對應的攻擊屬性 (如 STR/DEX/INT/WIS)。**
+    2. **雙手屬性 (`is_two_handed`)**：
+       - 若為 `巨劍`、`巨斧`、`長槍`、`長弓`、`法杖` 等重型武器，務必設為 `true`。
+       - **若為雙手武器，`slot_type` 必須設為 `main_hand`**。
+    3. **副手規範**：
+       - 若 `{slot_type}` 為 `off_hand`，通常應選擇 `小盾`、`巨盾`、`法器`、`魔導書` 或 `副手短劍`。
+
     **【核心原則：極度專精】**
     挑選 1~2 個主屬性與符合數量的附屬性進行「爆發式分配」，使其威力驚人。
     
@@ -43,11 +58,14 @@ async def generate_equipment_by_ai(
     {{
         "name": "裝備名稱",
         "description": "一段帥氣的文字敘述",
-        "special_effect": "如果是 T1 裝備，請在此寫下一個獨特的傳說特效描述",
+        "special_effect": "{'' if tier != 'T1' else '傳說特效描述'}", // 嚴格規定：僅 T1 階級可填寫特殊效果，其餘階級必須為空字串 ""
         "slot_type": "{slot_type}",
         "tier": "{tier}",
         "item_level": {item_level},
         "is_two_handed": false,
+        "weapon_type": "長劍", // 必須從上述合法列表中挑選，非武器則為 null
+        "damage_type": "physical", // physical 或 magical
+        "scaling_stat": "STR", // 該武器對應的主屬性
         "bonuses": {{
             "STR": 5,
             "crit_rate": 0.02
@@ -55,7 +73,7 @@ async def generate_equipment_by_ai(
     }}
     """
 
-    prompt = f"描述：{description}\n請根據以上條件生成裝備。"
+    prompt = f"描述：{description}\n請嚴格依照部位 `{slot_type}` 生成裝備。"
 
     try:
         response_text = await llm_client.call(
@@ -71,10 +89,22 @@ async def generate_equipment_by_ai(
         if parsed_data:
             # 1. 建立初步模型
             eq = Equipment(**parsed_data)
-            # 2. 強制設定 ILv 與 Tier，防止 AI 亂改
+            # 2. 強制設定 ILv, Tier 與 Slot，防止 AI 忽視指令
             eq.item_level = item_level
             eq.tier = tier
-            # 3. 通過系統過濾器進行校正
+            eq.slot_type = slot_type
+            
+            # 3. 額外防呆：如果 slot 是 main_hand/off_hand 但 AI 沒給 weapon_type，則給予預設
+            if slot_type in ["main_hand", "off_hand"] and not eq.weapon_type:
+                # 簡單判定：如果有 INT/WIS 可能是法杖/聖印，否則長劍
+                if eq.bonuses.get("INT", 0) > eq.bonuses.get("STR", 0):
+                    eq.weapon_type = "法杖"
+                elif eq.bonuses.get("WIS", 0) > eq.bonuses.get("STR", 0):
+                    eq.weapon_type = "聖印"
+                else:
+                    eq.weapon_type = "長劍" if slot_type == "main_hand" else "小盾"
+
+            # 4. 通過系統過濾器進行校正
             balanced_eq = EquipmentBalancer.validate_and_clamp(eq)
             return balanced_eq
             

@@ -1,0 +1,147 @@
+import discord
+import random
+from typing import List, Dict, Any, Optional
+from core.character import Character
+from core.combat import CombatManager
+from ui.embeds import build_character_embed
+
+class CombatView(discord.ui.View):
+    def __init__(self, character: Character, user: discord.Member, monsters: List[Dict[str, Any]]):
+        super().__init__(timeout=600.0)
+        self.character = character
+        self.user = user
+        self.manager = CombatManager(character, monsters)
+        self.current_msg = ""
+        self._update_buttons()
+
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        if interaction.user.id != self.user.id:
+            await interaction.response.send_message("❌ 你不能替別人戰鬥！", ephemeral=True)
+            return False
+        return True
+
+    def _update_buttons(self):
+        self.clear_items()
+        curr = self.manager.get_current_entity()
+        
+        if self.manager.is_finished:
+            btn_exit = discord.ui.Button(label="離開戰鬥", style=discord.ButtonStyle.secondary)
+            btn_exit.callback = self.exit_battle
+            self.add_item(btn_exit)
+            return
+
+        if curr["type"] == "player":
+            # 玩家回合：顯示行動按鈕
+            btn_atk = discord.ui.Button(label="⚔️ 普通攻擊", style=discord.ButtonStyle.danger)
+            btn_atk.callback = self.attack_select
+            self.add_item(btn_atk)
+            
+            btn_skill = discord.ui.Button(label="📜 使用技能", style=discord.ButtonStyle.primary)
+            btn_skill.callback = self.skill_select
+            self.add_item(btn_skill)
+            
+            btn_flee = discord.ui.Button(label="🏃 逃跑", style=discord.ButtonStyle.secondary)
+            btn_flee.callback = self.flee_attempt
+            self.add_item(btn_flee)
+        else:
+            # 怪物回合：顯示「等待對手行動」按鈕
+            btn_wait = discord.ui.Button(label="⏳ 等待怪物行動...", style=discord.ButtonStyle.secondary)
+            btn_wait.callback = self.monster_turn_trigger
+            self.add_item(btn_wait)
+
+    def _build_combat_embed(self) -> discord.Embed:
+        color = discord.Color.red()
+        if self.manager.is_finished:
+            color = discord.Color.gold() if self.manager.winner == "player" else discord.Color.dark_grey()
+            
+        embed = discord.Embed(title="⚔️ 戰鬥進行中", description=self.manager.get_battle_summary(), color=color)
+        if self.current_msg:
+            embed.add_field(name="📜 最近行動", value=self.current_msg, inline=False)
+        
+        curr = self.manager.get_current_entity()
+        footer = f"當前輪到: {'🌟 你' if curr['type'] == 'player' else f'👾 {curr['ref']['name']}'}"
+        if self.manager.is_finished:
+            footer = "戰鬥已結束。"
+        embed.set_footer(text=footer)
+        return embed
+
+    async def attack_select(self, interaction: discord.Interaction):
+        # 如果只有一個敵人，直接攻擊
+        alive_monsters = [i for i, m in enumerate(self.manager.monsters) if m["hp"] > 0]
+        if len(alive_monsters) == 1:
+            await self.execute_attack(interaction, alive_monsters[0])
+        else:
+            # 彈出選擇目標的選單 (這裡簡化，直接攻擊第一個活著的)
+            await self.execute_attack(interaction, alive_monsters[0])
+
+    async def execute_attack(self, interaction: discord.Interaction, target_idx: int):
+        result = await self.manager.player_attack(target_idx)
+        self.current_msg = result["msg"]
+        
+        if self.manager.is_finished and self.manager.winner == "player":
+            await self._process_victory(interaction)
+        else:
+            self.manager.next_turn()
+            self._update_buttons()
+            await interaction.response.edit_message(embed=self._build_combat_embed(), view=self)
+
+    async def monster_turn_trigger(self, interaction: discord.Interaction):
+        """觸發怪物的 AI 回合，自動處理所有連續的怪物回合"""
+        msgs = []
+        
+        while not self.manager.is_finished:
+            curr = self.manager.get_current_entity()
+            if curr["type"] != "monster":
+                break # 輪到玩家了，停止自動循環
+                
+            result = await self.manager.monster_action()
+            msgs.append(result["msg"])
+            
+            if self.manager.is_finished:
+                break
+                
+            self.manager.next_turn()
+            
+        self.current_msg = "\n".join(msgs)
+        self._update_buttons()
+        
+        if self.manager.is_finished and self.manager.winner == "monster":
+            await interaction.response.edit_message(embed=self._build_combat_embed(), view=self)
+            await interaction.followup.send("💀 你被打敗了... 冒險暫時告一段落。", ephemeral=True)
+        else:
+            await interaction.response.edit_message(embed=self._build_combat_embed(), view=self)
+
+    async def skill_select(self, interaction: discord.Interaction):
+        await interaction.response.send_message("技能系統介接中...", ephemeral=True)
+
+    async def flee_attempt(self, interaction: discord.Interaction):
+        if random.random() < 0.4:
+            self.manager.is_finished = True
+            await interaction.response.edit_message(content="🏃 你成功逃離了戰鬥！", embed=None, view=None)
+        else:
+            self.current_msg = "❌ 逃跑失敗！怪物擋住了你的去路。"
+            self.manager.next_turn()
+            self._update_buttons()
+            await interaction.response.edit_message(embed=self._build_combat_embed(), view=self)
+
+    async def _process_victory(self, interaction: discord.Interaction):
+        # 結算獎勵
+        total_gold = sum(m["gold_reward"] for m in self.manager.monsters)
+        total_exp = sum(m["exp_reward"] for m in self.manager.monsters)
+        
+        self.character.data.gold += total_gold
+        leveled_up = self.character.add_exp(total_exp)
+        
+        msg = f"🏆 **戰鬥勝利！**\n獲得了 {total_gold}G 和 {total_exp}XP。"
+        if leveled_up:
+            msg += f"\n🎊 **等級提升至 Lv.{self.character.data.level}！**"
+            
+        self.current_msg = msg
+        self._update_buttons()
+        await interaction.response.edit_message(embed=self._build_combat_embed(), view=self)
+
+    async def exit_battle(self, interaction: discord.Interaction):
+        from ui.views.hub import CharacterHubView
+        from ui.embeds import build_character_embed
+        view = CharacterHubView(self.character, self.user)
+        await interaction.response.edit_message(content="戰鬥結束，返回主面板。", embed=build_character_embed(self.character, self.user), view=view)

@@ -165,130 +165,111 @@ async def delete_character(interaction: discord.Interaction):
     await interaction.response.send_message("🗑️ 請選擇你想要刪除的角色：\n*警告：一旦刪除將無法復原。*", view=view, ephemeral=True)
 
 
-@bot.tree.command(name="測試裝備", description="測試 AI 裝備生成與數值平衡系統")
-async def test_equipment(
+# --- 偵錯與測試指令組 ---
+debug_group = app_commands.Group(name="debug", description="開發者偵錯與數值測試工具")
+
+@debug_group.command(name="heal", description="完全恢復當前角色的生命、法力與體力")
+async def debug_heal(interaction: discord.Interaction):
+    user_id = str(interaction.user.id)
+    char = Character.load(user_id)
+    if not char:
+        await interaction.response.send_message("❌ 找不到活躍角色。", ephemeral=True)
+        return
+    char.heal_all()
+    await interaction.response.send_message(f"❤️ **{char.data.name}** 已完全恢復！", ephemeral=True)
+
+@debug_group.command(name="combat", description="模擬生成指定數量與強度的怪物進行戰鬥測試")
+async def debug_combat(
+    interaction: discord.Interaction, 
+    count: int = 1, 
+    level: int = 1, 
+    threat: float = 0.5
+):
+    """用法: /debug combat count:3 level:10 threat:2.0"""
+    user_id = str(interaction.user.id)
+    char = Character.load(user_id)
+    if not char:
+        await interaction.response.send_message("❌ 你還沒有建立角色，無法測試戰鬥。", ephemeral=True)
+        return
+
+    await interaction.response.defer(ephemeral=True)
+    from core.monster_engine import MonsterEngine
+    from ui.views.combat import CombatView
+    from core.models import AreaSchema
+    
+    temp_area = AreaSchema(
+        id="test_arena", name="🧪 數值測試場", type="wilderness",
+        description="一個充滿數據流的虛擬空間，用來測試戰鬥平衡。",
+        base_level=level, threat_level=threat,
+        dominant_species=["測試傀儡", "數據病毒", "邏輯怪"]
+    )
+    
+    monsters = []
+    for _ in range(count):
+        m = await MonsterEngine._generate_single_monster(temp_area, llm_client, novelty_chance=1.0)
+        monsters.append(m)
+        
+    view = CombatView(char, interaction.user, monsters)
+    await interaction.edit_original_response(
+        content=f"🧪 **戰鬥模擬啟動！** (敵人等級: Lv.{level} | 威脅度: {threat})",
+        embed=view._build_combat_embed(),
+        view=view
+    )
+
+@debug_group.command(name="equipment", description="測試 AI 裝備生成與數值平衡系統")
+async def debug_equipment(
     interaction: discord.Interaction, 
     description: str, 
     level: int, 
     tier: Literal["T1", "T2", "T3", "T4", "T5"],
-    slot: str = "main_hand"
+    slot: Literal["head", "shoulders", "cloak", "chest", "hands", "legs", "feet", "main_hand", "off_hand", "trinket_1", "trinket_2", "ring_1", "ring_2"] = "main_hand"
 ):
-    """用法: /測試裝備 description:龍王的斷劍 level:50 tier:T5 slot:main_hand"""
     await interaction.response.defer(ephemeral=True)
-    
-    print(f"🛠️ 測試裝備生成: {description} (Lv.{level}, {tier})")
-    
     eq = await generate_equipment_by_ai(description, level, tier, slot, llm_client)
-    
     if not eq:
-        await interaction.followup.send("❌ 裝備生成失敗，請檢查 LLM 回應或重試。", ephemeral=True)
+        await interaction.followup.send("❌ 裝備生成失敗。", ephemeral=True)
         return
 
-    # 建立一個漂亮的預覽 Embed
     embed = discord.Embed(
         title=f"🛠️ 測試裝備：{eq.name}",
         description=f"**[{eq.tier}] Lv.{eq.item_level} {eq.slot_type}**\n\n*{eq.description}*",
         color=EquipmentBalancer.get_tier_color(eq.tier)
     )
-    
-    # 格式化數值顯示
     stats_text = ""
     for stat, val in eq.bonuses.items():
-        if "rate" in stat or "accuracy" in stat:
-            stats_text += f"- {stat}: {val*100:.1f}%\n"
-        else:
-            # 如果是整數，去掉 .0
-            display_val = int(val) if val == int(val) else val
-            stats_text += f"- {stat}: {display_val:+}\n"
+        if "rate" in stat or "accuracy" in stat: stats_text += f"- {stat}: {val*100:.1f}%\n"
+        else: stats_text += f"- {stat}: {int(val) if val == int(val) else val:+}\n"
     
-    if not stats_text:
-        stats_text = "*無屬性加成*"
-        
-    embed.add_field(name="✨ 平衡後數值", value=f"```md\n{stats_text}```", inline=False)
+    embed.add_field(name="✨ 平衡後數值", value=f"```md\n{stats_text or '*無屬性加成*'}```", inline=False)
     
-    # 新增：顯示特殊描述
-    if eq.special_effect:
-        embed.add_field(name="🔮 特殊效果 (預留位)", value=f"*{eq.special_effect}*", inline=False)
-    
-    # 新增：將裝備加入活躍角色背包
     user_id = str(interaction.user.id)
     char = Character.load(user_id)
-    if char:
-        char.add_item(eq)
-        embed.set_author(name=f"{interaction.user.display_name} 的新獲取裝備", icon_url=interaction.user.display_avatar.url)
-    else:
-        embed.set_footer(text="⚠️ 找不到活躍角色，裝備僅供預覽 (未存檔)")
-
-    budget_info = EquipmentBalancer.calculate_budgets(level, tier)
-    footer_text = f"主預算: {budget_info['primary']:.1f} | 附預算: {budget_info['sub']:.1f} | 數值已通過雙軌平衡器"
-    embed.set_footer(text=footer_text)
+    if char: char.add_item(eq)
     
     await interaction.followup.send(embed=embed, ephemeral=True)
 
-
-@bot.tree.command(name="技能生成測試", description="測試 AI 技能生成與解析能力")
-async def test_skill_generation(
+@debug_group.command(name="skill", description="測試 AI 技能生成與解析能力")
+async def debug_skill(
     interaction: discord.Interaction, 
     description: str,
     tier: Literal["T1", "T2", "T3", "T4", "T5"] = "T4"
 ):
-    """用法: /技能生成測試 description:時空撕裂斬 tier:T1"""
     await interaction.response.defer(ephemeral=True)
-    
-    print(f"🛠️ 測試技能生成: {description} ({tier})")
-    
     skill = await generate_single_skill_test(description, tier, llm_client)
-    
     if not skill:
-        await interaction.followup.send("❌ 技能生成失敗，請檢查 LLM 回應或解析日誌。", ephemeral=True)
+        await interaction.followup.send("❌ 技能生成失敗。", ephemeral=True)
         return
 
     m = skill.mechanics
-    cost_str = ", ".join([f"{k}:{v}" for k, v in m.cost.items()])
-    f = m.formula
-    formula_str = f"{f.base_stat} * ({f.dice} / {f.divisor})"
-    
-    target_map = {
-        "single": "單體",
-        "aoe": "群體",
-        "self": "自身",
-        "allies": "友軍"
-    }
-    target_display = target_map.get(m.target_type, m.target_type)
-    
     embed = discord.Embed(
         title=f"⚔️ 技能測試：{skill.name}",
-        description=f"**[{skill.tier} | {target_display}]**\n{skill.description}",
+        description=f"**[{skill.tier}]**\n{skill.description}",
         color=discord.Color.red()
     )
-    
-    # 翻譯關鍵字
-    translated_kws = [KEYWORD_TRANSLATIONS.get(kw, kw) for kw in m.keywords]
-    kws_str = ", ".join(translated_kws) if translated_kws else "無"
-    
-    embed.add_field(name="⚙️ 機制", value=f"**消耗**: {cost_str}\n**公式**: {formula_str}\n**關鍵字**: {kws_str}", inline=False)
-    
-    if m.custom_logic:
-        embed.add_field(name="⚠️ 自訂破壞邏輯", value=f"*{m.custom_logic}*", inline=False)
-        
-    if m.narrative_effect:
-        embed.add_field(name="📖 敘事特效", value=f"*{m.narrative_effect}*", inline=False)
-        
+    embed.add_field(name="⚙️ 機制", value=f"**消耗**: {m.cost}\n**公式**: {m.formula.base_stat}", inline=False)
     await interaction.followup.send(embed=embed, ephemeral=True)
 
-
-@bot.tree.command(name="使用技能", description="在戰鬥中使用你的技能")
-async def use_skill(interaction: discord.Interaction, skill_name: str, target: str = "怪物"):
-    """用法: /使用技能 skill_name:火球術 target:哥布林"""
-    from core.combat import execute_combat_skill
-    user_id = str(interaction.user.id)
-    char = Character.load(user_id)
-
-    if not char:
-        await interaction.response.send_message("❌ 你還沒有建立角色喔！", ephemeral=True)
-        return
-
-    await execute_combat_skill(interaction, char, skill_name, target, llm_client)
+bot.tree.add_command(debug_group)
 
 
 @bot.tree.command(name="說明", description="查看冒險指南，了解如何遊玩此 TRPG 系統")

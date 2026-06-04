@@ -6,7 +6,7 @@ import discord
 
 from core.models import CharacterSchema, Skill, Equipment
 from core.character import Character
-from core.constants import BASE_JOBS, BASE_RACES, SKILL_KEYWORDS
+from core.constants import BASE_JOBS, BASE_RACES, SKILL_KEYWORDS, STAT_TRANSLATIONS
 from core.skill_processor import SkillProcessor
 from utils.json_utils import repair_and_parse_json
 
@@ -15,14 +15,10 @@ def parse_bonus_points(text: str) -> dict:
     """
     解析玩家輸入的屬性點數，支援中英文與多種格式
     """
-    mapping = {
-        "力量": "STR", "str": "STR",
-        "敏捷": "DEX", "dex": "DEX",
-        "體質": "CON", "con": "CON",
-        "智力": "INT", "int": "INT",
-        "感知": "WIS", "wis": "WIS",
-        "魅力": "CHA", "cha": "CHA"
-    }
+    # 建立解析映射：包含中文名與英文縮寫
+    mapping = {v: k for k, v in STAT_TRANSLATIONS.items()}
+    mapping.update({k.lower(): k for k in STAT_TRANSLATIONS.keys()})
+    
     distribution = {}
     # 尋找所有 "文字 + 數字" 的組合 (例如 "力量 3", "INT 2")
     matches = re.findall(r'([a-zA-Z]+|[\u4e00-\u9fa5]+)[\s：:]*(\d+)', text)
@@ -124,13 +120,21 @@ async def generate_character_json(description: str, llm_client, user_id: str, na
         schema_data.inventory.extend(starter_gear)
         
         char = Character(schema_data, user_id)
+
+        # 6. 自動穿上初始裝備
+        for item in starter_gear:
+            try:
+                char.equip_item(item.name)
+            except Exception as e:
+                print(f"自動穿戴初始裝備失敗: {item.name} - {e}")
         
-        # 6. 確保角色以全滿狀態誕生
+        # 7. 確保角色以全滿狀態誕生
         char.heal_all()
 
         def get_sheet_string():
             d = char.data
             return f"""角色名稱：{d.name} [{d.race} {d.job_name}]
+等級：Lv.{d.level} ({d.exp}/{char.xp_required} XP)
 生命值：{d.vitality.hp}/{char.max_hp} | 法力值：{d.vitality.mp}/{char.max_mp}
 基礎屬性：力量 {d.primary_stats.STR} | 敏捷 {d.primary_stats.DEX} | 體質 {d.primary_stats.CON} | 智力 {d.primary_stats.INT} | 感知 {d.primary_stats.WIS} | 魅力 {d.primary_stats.CHA}
 性格特質：信念 [{d.personality.belief}] | 缺陷 [{d.personality.flaw}] | 恐懼 [{d.personality.fear}]
@@ -154,10 +158,7 @@ class StatsAllocationView(discord.ui.View):
         # 初始化為角色目前的剩餘點數
         self.points_left = character_data.data.stat_points
         self.stats = {"STR": 0, "DEX": 0, "CON": 0, "INT": 0, "WIS": 0, "CHA": 0}
-        self.mapping = {
-            "STR": "力量", "DEX": "敏捷", "CON": "體質",
-            "INT": "智力", "WIS": "感知", "CHA": "魅力"
-        }
+        self.mapping = STAT_TRANSLATIONS
 
     async def interaction_check(self, interaction: discord.Interaction) -> bool:
         if str(interaction.user.id) != str(self.character_data.user_id):
@@ -185,27 +186,27 @@ class StatsAllocationView(discord.ui.View):
         self.confirm_btn.disabled = (sum(self.stats.values()) == 0)
         await interaction.response.edit_message(content=self.get_content(), view=self)
 
-    @discord.ui.button(label="力量 STR", style=discord.ButtonStyle.secondary, row=0)
+    @discord.ui.button(label="力量", style=discord.ButtonStyle.secondary, row=0)
     async def str_button(self, interaction: discord.Interaction, button: discord.ui.Button):
         await self._add_stat(interaction, "STR")
 
-    @discord.ui.button(label="敏捷 DEX", style=discord.ButtonStyle.secondary, row=0)
+    @discord.ui.button(label="敏捷", style=discord.ButtonStyle.secondary, row=0)
     async def dex_button(self, interaction: discord.Interaction, button: discord.ui.Button):
         await self._add_stat(interaction, "DEX")
 
-    @discord.ui.button(label="體質 CON", style=discord.ButtonStyle.secondary, row=0)
+    @discord.ui.button(label="體質", style=discord.ButtonStyle.secondary, row=0)
     async def con_button(self, interaction: discord.Interaction, button: discord.ui.Button):
         await self._add_stat(interaction, "CON")
 
-    @discord.ui.button(label="智力 INT", style=discord.ButtonStyle.secondary, row=1)
+    @discord.ui.button(label="智力", style=discord.ButtonStyle.secondary, row=1)
     async def int_button(self, interaction: discord.Interaction, button: discord.ui.Button):
         await self._add_stat(interaction, "INT")
 
-    @discord.ui.button(label="感知 WIS", style=discord.ButtonStyle.secondary, row=1)
+    @discord.ui.button(label="感知", style=discord.ButtonStyle.secondary, row=1)
     async def wis_button(self, interaction: discord.Interaction, button: discord.ui.Button):
         await self._add_stat(interaction, "WIS")
 
-    @discord.ui.button(label="魅力 CHA", style=discord.ButtonStyle.secondary, row=1)
+    @discord.ui.button(label="魅力", style=discord.ButtonStyle.secondary, row=1)
     async def cha_button(self, interaction: discord.Interaction, button: discord.ui.Button):
         await self._add_stat(interaction, "CHA")
 

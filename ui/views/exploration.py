@@ -6,6 +6,7 @@ from datetime import datetime
 from core.character import Character
 from core.models import AreaSchema, BuildingSchema, Item, StatusEffect
 from core.world import WorldManager
+from core.constants import STAT_TRANSLATIONS
 from ui.embeds import (
     build_character_embed, 
     build_location_embed,
@@ -59,6 +60,9 @@ class ArbiterModal(discord.ui.Modal):
             discord.Color.green() if "成功" in result["res_str"] else discord.Color.red()
         )
         
+        # 屬性中文化
+        translated_stat = STAT_TRANSLATIONS.get(result['stat_name'], result['stat_name'])
+        
         embed = discord.Embed(
             title=f"🎬 行動結果：{result['res_str']}", 
             description=f"**{self.character.data.name}** 嘗試：\n> {player_text}\n\n**{result['narrative']}**", 
@@ -68,7 +72,7 @@ class ArbiterModal(discord.ui.Modal):
         embed.add_field(
             name="🎲 檢定數據", 
             value=f"**難度**: {result['final_dc']} (基{result['base_dc']}+修{self.area.base_level//5})\n"
-                  f"**表現**: {result['total']} ({result['roll']}+{result['modifier']} [{result['stat_name']} {result['stat_val']}/5])", 
+                  f"**表現**: {result['total']} ({result['roll']}+{result['modifier']} [{translated_stat} {result['stat_val']}/5])", 
             inline=False
         )
         
@@ -203,41 +207,31 @@ class ExplorationView(discord.ui.View):
         if self.character.data.vitality.stamina < COST:
             await interaction.response.send_message("❌ 體力不足。", ephemeral=True)
             return
-        self.area.threat_level += 0.5
+            
         self.character.data.vitality.stamina -= COST
+        self.area.threat_level += 0.5
         self.character.save()
         WorldManager.save_area(self.area)
+        
         await interaction.response.defer()
+        
         from core.monster_engine import MonsterEngine
-        m_group = MonsterEngine.generate_monster_group(self.area)
-        gold = sum(m["gold_reward"] for m in m_group)
-        exp = sum(m["exp_reward"] for m in m_group)
-        m_names = "、".join([f"**{m['name']}**" for m in m_group])
-        embed = discord.Embed(title=f"⚔️ 遭遇戰：{len(m_group)} 個敵人", description=f"你遭遇了 {m_names}！", color=discord.Color.red())
-        for i, m in enumerate(m_group): embed.add_field(name=f"敵人 {i+1}: {m['name']}", value=f"階級: {m['rank']} | 生命: {m['hp']}", inline=False)
+        from ui.views.combat import CombatView
         from services.llm_service import LMStudioClient
-        from core.drop_engine import DropEngine
-        llm = LMStudioClient()
-        dr_chances = {"普通": 0.25, "精英": 0.5, "稀有": 0.75, "史詩": 0.9, "頭目": 1.0}
-        loots = []
-        has_boss = False
-        boss_names = []
-        for m in m_group:
-            if m["rank"] == "頭目":
-                has_boss = True
-                boss_names.append(m["name"])
-            if random.random() < dr_chances.get(m["rank"], 0.2):
-                l = await DropEngine.generate_loot(self.area, m, llm)
-                if l: self.character.add_item(l); loots.append(l)
         
-        if has_boss:
-            self.character.add_log("LEGEND", f"在 {self.area.name} 擊敗了強大的頭目：{', '.join(boss_names)}！")
+        # 1. 生成怪物群體 (包含物防、魔防、速度等)
+        llm_client = LMStudioClient()
+        m_group = await MonsterEngine.generate_monster_group(self.area, llm_client)
         
-        if loots: embed.add_field(name="🎁 獲得掉落物", value="\n".join([f"**{l.name}** ({l.material_type})" for l in loots]), inline=False)
-        self.character.data.gold += gold
-        self.character.add_exp(exp)
-        embed.set_footer(text=f"總計獲得: {gold} G | {exp} XP")
-        await interaction.edit_original_response(embed=embed, view=self)
+        # 2. 啟動互動式戰鬥視圖
+        view = CombatView(self.character, self.user, m_group)
+        embed = view._build_combat_embed()
+        
+        await interaction.edit_original_response(
+            content=f"⚔️ **在 {self.area.name} 遭遇了敵人！**",
+            embed=embed,
+            view=view
+        )
 
     async def handle_deep_exploration(self, interaction: discord.Interaction):
         if self.character.data.vitality.stamina < 10:
@@ -276,6 +270,8 @@ class ExplorationView(discord.ui.View):
         """
         
         await interaction.response.defer(ephemeral=True)
+        from services.llm_service import LMStudioClient
+        llm = LMStudioClient()
         try:
             txt = await llm.call("生成探索事件", sys_prompt)
             btn = discord.ui.Button(label="🎬 採取行動", style=discord.ButtonStyle.primary)

@@ -298,12 +298,23 @@ class Character:
         ts = self.total_stats
         bonuses = self.get_total_bonuses()
         def get_bonus(name: str) -> float: return bonuses.get(name, 0.0)
+        
+        # 衍生雙防計算 (由屬性加權 + 等級保底得出)
+        lvl_bonus = self.data.level // 2
+        
+        # 物理防禦：體質核心(0.7) + 力量(0.2) + 敏捷(0.1) + 等級加成
+        p_def = (ts["CON"] * 0.7) + (ts["STR"] * 0.2) + (ts["DEX"] * 0.1) + lvl_bonus
+        # 魔法防禦：感知核心(0.7) + 體質韌性(0.2) + 智力(0.1) + 等級加成
+        m_def = (ts["WIS"] * 0.7) + (ts["CON"] * 0.2) + (ts["INT"] * 0.1) + lvl_bonus
+        
         main_off = max(ts["DEX"], ts["INT"], ts["WIS"])
         return {
+            "p_def": int(p_def), 
+            "m_def": int(m_def),
             "crit_rate": 0.05 + (main_off * 0.005) + get_bonus("crit_rate"),
             "evasion_rate": 0.05 + (ts["DEX"] * 0.008) + get_bonus("evasion_rate"),
             "accuracy": 0.85 + (max(ts["DEX"], ts["WIS"]) * 0.01) + get_bonus("accuracy"),
-            "cast_speed": 1.0 + (ts["INT"] * 0.02) + get_bonus("cast_speed"),
+            "skill_power": 1.0 + (ts["INT"] * 0.02) + get_bonus("skill_power"),
             "tenacity": int(ts["CON"] * 2 + get_bonus("tenacity")),
             "luck": int(1 + get_bonus("luck"))
         }

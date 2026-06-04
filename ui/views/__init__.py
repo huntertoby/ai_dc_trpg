@@ -2,6 +2,7 @@ from .hub import CharacterHubView, CharacterSwitchView, CharacterDeleteView
 from .inventory import InventoryView, UnequipView
 from .exploration import CityView, ExplorationView, BuildingView, ArbiterModal
 from .guild import QuestBoardView, QuestDetailView
+from .combat import CombatView
 
 __all__ = [
     "CharacterHubView",
@@ -14,5 +15,6 @@ __all__ = [
     "BuildingView",
     "ArbiterModal",
     "QuestBoardView",
-    "QuestDetailView"
+    "QuestDetailView",
+    "CombatView"
 ]

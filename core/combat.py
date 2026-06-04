@@ -1,122 +1,183 @@
-import asyncio
+import random
+import math
+from typing import List, Dict, Any, Optional, Union
 from core.character import Character
-from core.models import Skill
+from core.models import Skill, Equipment
 from core.skill_processor import SkillProcessor
-import discord
+from core.constants import STAT_TRANSLATIONS
 
-async def generate_combat_narrative(
-    character: Character, 
-    skill: Skill, 
-    mechanics_result: dict, 
-    llm_client
-) -> str:
-    """
-    將生硬的數值計算結果傳給 AI，讓 AI 生成戰鬥敘述與處理特殊邏輯。
-    """
-    target = mechanics_result.get("target", "假想敵")
-    action_type = skill.mechanics.action_type
-    
-    # 組合上下文
-    context = f"""
-    【戰鬥事件】
-    發動者: {character.data.name} (Lv.{character.data.level} {character.data.job_name})
-    目標: {target}
-    使用技能: {skill.name} ({skill.tier})
-    - 技能描述: {skill.description}
-    - 基礎動作: {action_type}
-    - 特殊指令 (Custom Logic): {skill.mechanics.custom_logic or '無'}
-    
-    【系統結算數據】
-    - 消耗: {skill.mechanics.cost}
-    - 擲骰結果: 擲出 {mechanics_result['dice_roll']} (使用 {skill.mechanics.formula.dice})
-    - 最終威力值: {mechanics_result['final_value']}
-    - 觸發關鍵字: {', '.join(skill.mechanics.keywords) if skill.mechanics.keywords else '無'}
-    """
-    
-    system_prompt = f"""
-    你是一個專業的 TRPG 戰鬥旁白 (GM)。
-    請根據提供的【戰鬥事件】與【系統結算數據】，撰寫一段生動、具畫面感的戰鬥敘述。
-    
-    **【撰寫規範】**
-    1. 必須將擲骰結果 ({mechanics_result['dice_roll']}) 與最終威力 ({mechanics_result['final_value']}) 巧妙地融入劇情中。如果擲骰低，描述失誤或阻礙；如果高，描述爆發。
-    2. 如果有【特殊指令 (Custom Logic)】，請判斷該邏輯是否觸發，並在敘述中實現它的效果。
-    3. 敘述長度約 50~100 字，保持節奏緊湊。
-    4. 必須使用繁體中文。
-    5. 不要輸出任何 JSON，直接輸出純文字的敘事段落。
-    """
-    
-    prompt = f"請根據以下資料生成戰鬥敘述：\n{context}"
-    
-    try:
-        narrative = await llm_client.call(
-            prompt=prompt,
-            system_prompt=system_prompt,
-            temperature=0.8
-        )
-        return narrative.strip()
-    except Exception as e:
-        print(f"戰鬥敘述生成失敗: {e}")
-        return f"*({character.data.name} 發動了 {skill.name}，但迷霧遮蔽了戰場，無法看清具體效果。)*"
-
-async def execute_combat_skill(
-    interaction: discord.Interaction, 
-    character: Character, 
-    skill_name: str, 
-    target_name: str, 
-    llm_client
-):
-    """處理完整的技能使用流程"""
-    await interaction.response.defer(ephemeral=False) # 戰鬥是公開的
-    
-    # 1. 尋找技能
-    skill = next((s for s in character.data.abilities if s.name == skill_name), None)
-    if not skill:
-        await interaction.followup.send(f"❌ 找不到名為 `{skill_name}` 的技能。", ephemeral=True)
-        return
-
-    try:
-        # 2. 系統硬核結算 (扣魔、算公式)
-        mechanics_result = SkillProcessor.execute_skill(skill, character)
-        mechanics_result["target"] = target_name
+class CombatManager:
+    def __init__(self, character: Character, monsters: List[Dict[str, Any]]):
+        self.character = character
+        self.monsters = monsters
+        self.turn_order = []
+        self.current_turn_idx = 0
+        self.battle_logs = []
+        self.is_finished = False
+        self.winner = None # 'player' or 'monster'
         
-        # 3. 處理 Keyword (這裡暫時印出，未來接上怪物系統時會實際扣怪物血)
-        keyword_actions = []
-        for kw in skill.mechanics.keywords:
-            if kw == "Execute": keyword_actions.append("試圖處決目標")
-            elif kw == "Lifesteal": keyword_actions.append("吸收生命力")
-            elif kw == "Pierce": keyword_actions.append("無視部分防禦")
-            elif kw == "Burn": keyword_actions.append("附加灼燒狀態")
-            else: keyword_actions.append(f"觸發 {kw}")
+        self._initialize_battle()
+
+    def _initialize_battle(self):
+        """初始化戰鬥：決定行動順序"""
+        entities = []
+        # 玩家加入順序 (速度 + 1d10 + 基礎先攻加成 10)
+        p_speed = 10 + self.character.total_stats["DEX"] + random.randint(1, 10)
+        entities.append({"type": "player", "speed": p_speed, "ref": self.character})
+        
+        # 怪物加入順序
+        for i, m in enumerate(self.monsters):
+            m_speed = m["speed"] + random.randint(1, 10)
+            entities.append({"type": "monster", "speed": m_speed, "ref": m, "index": i})
             
-        # 4. 呼叫 AI 生成敘事
-        narrative = await generate_combat_narrative(character, skill, mechanics_result, llm_client)
+        # 排序：速度高者先行動
+        self.turn_order = sorted(entities, key=lambda x: x["speed"], reverse=True)
+        self.battle_logs.append("⚔️ 戰鬥開始！行動順序已決定。")
+
+    def get_current_entity(self) -> Dict[str, Any]:
+        return self.turn_order[self.current_turn_idx]
+
+    def next_turn(self):
+        """切換到下一個行動者"""
+        self.current_turn_idx = (self.current_turn_idx + 1) % len(self.turn_order)
+        # 如果當前行動者已死亡，遞迴跳過
+        curr = self.get_current_entity()
+        if curr["type"] == "monster" and curr["ref"]["hp"] <= 0:
+            self.next_turn()
+
+    async def player_attack(self, target_idx: int) -> Dict[str, Any]:
+        """玩家進行普通攻擊 (TRPG 1d20 風格)"""
+        target = self.monsters[target_idx]
+        c_stats = self.character.combat_stats
         
-        # 5. 建立戰鬥面板
-        embed = discord.Embed(
-            title=f"⚔️ {character.data.name} 發動了 【{skill.name}】！",
-            description=f"> *{narrative}*",
-            color=discord.Color.brand_red() if skill.mechanics.action_type == "damage" else discord.Color.green()
+        # 1. 取得屬性修正與武器加成
+        main_hand = self.character.data.equipment_slots.main_hand
+        scaling_stat = "STR"
+        damage_type = "physical"
+        weapon_power = 0
+        
+        if main_hand and isinstance(main_hand, Equipment):
+            scaling_stat = main_hand.scaling_stat
+            damage_type = main_hand.damage_type
+            weapon_power = main_hand.bonuses.get("ATK", 0) 
+            # 有武器時，屬性倍率較高 (1.5x)
+            stat_multiplier = 1.5
+        else:
+            # 空手時，屬性倍率較低 (1.0x)
+            stat_multiplier = 1.0
+            
+        stat_val = self.character.total_stats.get(scaling_stat, 10)
+        
+        # ... (命中判定代碼保持不變) ...
+
+        # 3. 傷害計算 (1d20 作為威力加乘：0.55x ~ 1.5x)
+        dmg_roll = random.randint(1, 20)
+        roll_mult = 0.5 + (dmg_roll * 0.05)
+        
+        # 基礎威力 = (屬性 * 倍率) + 武器
+        base_power = (stat_val * stat_multiplier) + weapon_power
+        
+        # 4. 判定爆擊 (1.5x)
+        is_crit = random.random() < c_stats["crit_rate"]
+        crit_mult = 1.5 if is_crit else 1.0
+        
+        # 5. 計算總威力 (基 * 效 * 爆)
+        total_power = base_power * roll_mult * crit_mult
+        
+        # 6. 防禦力固定減免 (Flat Subtraction)
+        defense = target["defense"] if damage_type == "physical" else target["m_defense"]
+        
+        # 最終傷害 = 總威力 - 固定防禦
+        final_dmg = max(1, round(total_power - defense))
+        
+        # 7. 應用傷害
+        target["hp"] -= final_dmg
+        self._check_battle_status()
+        
+        crit_tag = "✨ **爆擊！** " if is_crit else ""
+        crit_info = f" * 💥1.5x" if is_crit else ""
+        
+        # 顯示更詳細的計算過程
+        stat_name = STAT_TRANSLATIONS.get(scaling_stat, scaling_stat)
+        base_breakdown = f"{stat_name}:{stat_val} * {stat_multiplier}x + 攻:{weapon_power}"
+        
+        calc_info = (
+            f"\n 🎲 **判定**: {dmg_roll} (效能 {roll_mult:.2f})"
+            f"\n 📊 **威力**: ({base_breakdown}) * {roll_mult:.2f}{crit_info}"
+            f"\n 🛡️ **減免**: - 敵方防禦 {defense}"
         )
-        embed.set_author(name=interaction.user.display_name, icon_url=interaction.user.display_avatar.url)
         
-        # 數值總結區塊
-        action_verb = "💥 造成傷害" if skill.mechanics.action_type == "damage" else "✨ 產生效果"
-        if skill.mechanics.action_type == "heal": action_verb = "💚 恢復生命"
-        elif skill.mechanics.action_type == "buff": action_verb = "🛡️ 獲得增益"
+        msg = f"{crit_tag}💥 {self.character.data.name} 對 {target['name']} 造成了 {final_dmg} 點傷害！{calc_info}"
         
-        cost_str = ", ".join([f"{k} -{v}" for k,v in skill.mechanics.cost.items()])
-        stats_text = f"**{action_verb}**: {mechanics_result['final_value']} 點\n"
-        stats_text += f"**🎲 擲骰判定**: {mechanics_result['dice_roll']} ({mechanics_result['dice_type']})\n"
-        if cost_str: stats_text += f"**💧 消耗**: {cost_str}\n"
-        if keyword_actions: stats_text += f"**⚡ 觸發機制**: {', '.join(keyword_actions)}"
+        if target["hp"] <= 0:
+            msg += f"\n💀 {target['name']} 倒下了！"
+            
+        return {"success": True, "damage": final_dmg, "is_crit": is_crit, "msg": msg}
+
+    async def monster_action(self) -> Dict[str, Any]:
+        """處理當前怪物的 AI 行動 (TRPG 風格)"""
+        curr = self.get_current_entity()
+        if curr["type"] != "monster": return {"success": False}
         
-        embed.add_field(name="📊 系統結算", value=stats_text, inline=False)
+        monster = curr["ref"]
+        c_stats = self.character.combat_stats
         
-        # 顯示剩餘狀態
-        embed.set_footer(text=f"剩餘狀態 | HP: {character.data.vitality.hp}/{character.max_hp} | MP: {character.data.vitality.mp}/{character.max_mp}")
+        # 1. 怪物命中判定
+        hit_chance = 90 - (c_stats["evasion_rate"] * 100)
+        if random.randint(1, 100) > hit_chance:
+            return {"success": False, "msg": f"🛡️ {self.character.data.name} 靈巧地躲過了 {monster['name']} 的攻擊！ (迴避 {c_stats['evasion_rate']*100:.1f}%)"}
+            
+        # 2. 玩家減傷計算
+        # 使用統一的戰鬥屬性計算
+        p_def = c_stats["p_def"]
         
-        await interaction.followup.send(embed=embed)
+        # 韌性減傷 (比例減傷)
+        tenacity_reduction = 1.0 - (c_stats["tenacity"] / 1000)
+        tenacity_reduction = max(0.5, tenacity_reduction)
         
-    except ValueError as e:
-        # 捕捉 MP 不足等錯誤
-        await interaction.followup.send(f"⚠️ 發動失敗：{e}", ephemeral=True)
+        # 怪物傷害：1d20 效能倍率 * (基礎攻擊力)
+        m_roll = random.randint(1, 20)
+        m_roll_mult = 0.5 + (m_roll * 0.05)
+        total_m_power = monster["attack"] * m_roll_mult
+        
+        # 最終傷害 = (威力 - 固定防禦) * 韌性比例減傷
+        final_dmg = max(1, round((total_m_power - p_def) * tenacity_reduction))
+        
+        self.character.data.vitality.hp -= final_dmg
+        self.character.save()
+        self._check_battle_status()
+        
+        # 顯示更詳細的計算過程
+        lvl_bonus = self.character.data.level // 2
+        ts = self.character.total_stats
+        # 物理防禦：體質核心(0.7) + 力量(0.2) + 敏捷(0.1)
+        stat_def = (ts["CON"] * 0.7) + (ts["STR"] * 0.2) + (ts["DEX"] * 0.1)
+        def_formula = f"體質:{ts['CON']}*0.7 + 力量:{ts['STR']}*0.2 + 敏捷:{ts['DEX']}*0.1"
+        
+        calc_info = (
+            f"\n 🎲 **判定**: {m_roll} (效能 {m_roll_mult:.2f})"
+            f"\n 📊 **威力**: {monster['attack']} * {m_roll_mult:.2f}"
+            f"\n 🛡️ **防禦**: -{p_def} (屬防:{stat_def:.1f} ({def_formula}) + 等級:{lvl_bonus})"
+            f"\n ✨ **減傷**: 韌性免傷 {(1-tenacity_reduction)*100:.0f}%"
+        )
+        return {"success": True, "damage": final_dmg, "msg": f"💢 {monster['name']} 攻擊了 {self.character.data.name}，造成 {final_dmg} 點傷害！{calc_info}"}
+
+    def _check_battle_status(self):
+        """檢查戰鬥是否結束"""
+        if self.character.data.vitality.hp <= 0:
+            self.is_finished = True
+            self.winner = "monster"
+            return
+            
+        if all(m["hp"] <= 0 for m in self.monsters):
+            self.is_finished = True
+            self.winner = "player"
+            return
+
+    def get_battle_summary(self) -> str:
+        status = f"👤 **{self.character.data.name}**: {self.character.data.vitality.hp}/{self.character.max_hp} HP\n"
+        for i, m in enumerate(self.monsters):
+            level_str = f"Lv.{m['level']}"
+            hp_str = f"{max(0, m['hp'])}/{m['max_hp']} HP"
+            status += f"👾 #{i} **{m['name']}** ({level_str}): {hp_str} {'(已倒下)' if m['hp'] <= 0 else ''}\n"
+        return status

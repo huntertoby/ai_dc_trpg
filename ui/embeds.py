@@ -1,29 +1,35 @@
 import discord
 from core.character import Character
-from core.constants import KEYWORD_TRANSLATIONS
+from core.constants import KEYWORD_TRANSLATIONS, STAT_TRANSLATIONS
 
 def build_character_embed(character: Character, user: discord.Member) -> discord.Embed:
     """生成核心狀態面板 (精簡版)"""
     d = character.data
     base_jobs_str = ", ".join(d.base_jobs)
+    xp_str = f"{d.exp} / {character.xp_required}"
 
     embed = discord.Embed(
         title=f"⚜️ {d.name} 的核心狀態 ⚜️",
-        description=f"**Lv. {d.level} | [{d.race}] {d.job_name}**\n*基準：{base_jobs_str}*",
+        description=(
+            f"**Lv. {d.level}** (`{xp_str} XP`)\n"
+            f"**[{d.race}] {d.job_name}**\n"
+            f"*基準：{base_jobs_str}*"
+        ),
         color=discord.Color.dark_purple()
     )
     embed.set_author(name=user.display_name, icon_url=user.display_avatar.url)
 
-    # 1. 狀態條 (2x2 佈局)
-    hp_str = f"HP:  {d.vitality.hp}/{character.max_hp}"
-    mp_str = f"MP:  {d.vitality.mp}/{character.max_mp}"
-    stamina_str = f"STAM: {d.vitality.stamina}/{character.max_stamina}"
-    san_str = f"SAN: {d.vitality.sanity}/{character.max_sanity}"
+    # 1. 狀態條 (2x2 佈局) - 使用中文標籤並優化對齊
+    # 生命 (HP), 法力 (MP), 精力 (STAM), 理智 (SAN)
+    hp_info = f"生命: {d.vitality.hp}/{character.max_hp}"
+    mp_info = f"法力: {d.vitality.mp}/{character.max_mp}"
+    stam_info = f"精力: {d.vitality.stamina}/{character.max_stamina}"
+    san_info = f"理智: {d.vitality.sanity}/{character.max_sanity}"
 
     ansi_bars = (
         f"```ansi\n"
-        f"\u001b[1;31m❤️ {hp_str:<15}\u001b[0m  \u001b[1;34m✨ {mp_str:<15}\u001b[0m\n"
-        f"\u001b[1;33m⚡ {stamina_str:<15}\u001b[0m  \u001b[1;35m🧠 {san_str:<15}\u001b[0m\n"
+        f"\u001b[1;31m❤️ {hp_info:<16}\u001b[0m \u001b[1;34m✨ {mp_info:<16}\u001b[0m\n"
+        f"\u001b[1;33m⚡ {stam_info:<16}\u001b[0m \u001b[1;35m🧠 {san_info:<16}\u001b[0m\n"
         f"```"
     )
     embed.add_field(name="【 當前狀態 】", value=ansi_bars, inline=False)
@@ -32,18 +38,23 @@ def build_character_embed(character: Character, user: discord.Member) -> discord
     ts = character.total_stats
     loc = d.location
     stats = (
-        f"STR (力量): {ts['STR']:<3} | INT (智力): {ts['INT']:<3}\n"
-        f"DEX (敏捷): {ts['DEX']:<3} | WIS (感知): {ts['WIS']:<3}\n"
-        f"CON (體質): {ts['CON']:<3} | CHA (魅力): {ts['CHA']:<3}\n"
+        f"力量: {ts['STR']:<3} | 智力: {ts['INT']:<3}\n"
+        f"敏捷: {ts['DEX']:<3} | 感知: {ts['WIS']:<3}\n"
+        f"體質: {ts['CON']:<3} | 魅力: {ts['CHA']:<3}\n"
         f"📍 當前座標: ({loc[0]}, {loc[1]})"
     )
     embed.add_field(name="【 基礎屬性與位置 】", value=f"```yaml\n{stats}\n```", inline=False)
 
     # 3. 戰鬥屬性
     c_stats = character.combat_stats
+    # 獲取總防禦 (僅由屬性衍生得出)
+    p_def = c_stats["p_def"]
+    m_def = c_stats["m_def"]
+
     combat = (
+        f"物理防禦: {p_def:<5} | 魔法防禦: {m_def:<5}\n"
         f"爆擊率: {c_stats['crit_rate'] * 100:>4.1f}% | 閃避率: {c_stats['evasion_rate'] * 100:>4.1f}%\n"
-        f"命中率: {c_stats['accuracy'] * 100:>4.1f}% | 施法速: {c_stats['cast_speed']:>4.1f}\n"
+        f"命中率: {c_stats['accuracy'] * 100:>4.1f}% | 技威力: {c_stats['skill_power'] * 100:>4.1f}%\n"
         f"韌  性: {c_stats['tenacity']:>5} | 幸  運: {c_stats['luck']:>5}"
     )
     embed.add_field(name="【 戰鬥詳細數值 】", value=f"```yaml\n{combat}\n```", inline=False)
@@ -159,7 +170,10 @@ def build_skills_embed(character: Character, user: discord.Member) -> discord.Em
             cost_str = ", ".join([f"{k}:{v}" for k, v in m.cost.items()])
             f = m.formula
             target_display = target_map.get(m.target_type, m.target_type)
-            formula_str = f"{f.base_stat} * ({f.dice} / {f.divisor})"
+            
+            # 屬性中文化
+            translated_stat = STAT_TRANSLATIONS.get(f.base_stat, f.base_stat)
+            formula_str = f"{translated_stat} * ({f.dice} / {f.divisor})"
             
             translated_kws = [KEYWORD_TRANSLATIONS.get(kw, kw) for kw in m.keywords]
             kws = ", ".join(translated_kws) if translated_kws else "無"
