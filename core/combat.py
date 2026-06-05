@@ -15,6 +15,7 @@ class CombatManager:
         self.battle_logs = []
         self.is_finished = False
         self.winner = None # 'player' or 'monster'
+        self.current_tick_logs = []
         
         # 殘響延遲技能佇列
         self.delayed_actions = []
@@ -26,6 +27,9 @@ class CombatManager:
         # 初始化上一回合的生命與魔法快照
         self.character._hp_snapshot = self.character.data.vitality.hp
         self.character._mp_snapshot = self.character.data.vitality.mp
+        
+        # 初始化戰鬥級別的臨時 Flag 共享池
+        self._temp_flags = {}
         
         self._initialize_battle()
 
@@ -45,6 +49,12 @@ class CombatManager:
         self.turn_order = sorted(entities, key=lambda x: x["speed"], reverse=True)
         self.battle_logs.append("⚔️ 戰鬥開始！行動順序已決定。")
         
+        # 觸發戰鬥開始事件
+        from core.trigger_engine import TriggerEngine
+        TriggerEngine.dispatch_event("on_battle_start", self.character, None, self)
+        for m in self.monsters:
+            TriggerEngine.dispatch_event("on_battle_start", m, None, self)
+            
         # 針對第一個行動者，進行狀態 Tick (處理可能已有的 Stun/Burn 等)
         self._tick_current_entity_at_turn_start()
 
@@ -55,6 +65,22 @@ class CombatManager:
         """切換到下一個行動者"""
         try:
             curr_entity = self.get_current_entity()
+            # 觸發回合結束事件
+            from core.trigger_engine import TriggerEngine
+            TriggerEngine.dispatch_event("on_turn_end", curr_entity["ref"], None, self)
+            
+            # Decrement trigger cooldowns
+            decremented_ids = set()
+            for trigger in TriggerEngine.get_active_triggers(curr_entity["ref"]):
+                orig = trigger.get("_orig_trigger", trigger)
+                t_id = id(orig)
+                if t_id not in decremented_ids:
+                    decremented_ids.add(t_id)
+                    cooldown_left = orig.get("cooldown_left", 0)
+                    if cooldown_left > 0:
+                        orig["cooldown_left"] = cooldown_left - 1
+                        trigger["cooldown_left"] = cooldown_left - 1
+            
             if curr_entity["type"] == "player":
                 self.character._hp_snapshot = self.character.data.vitality.hp
                 self.character._mp_snapshot = self.character.data.vitality.mp
@@ -63,6 +89,8 @@ class CombatManager:
             
         self.current_turn_idx = (self.current_turn_idx + 1) % len(self.turn_order)
         self._current_turn_ticked = False
+        # 清除當前回合的臨時 Flag
+        self._temp_flags.clear()
         
         self._tick_current_entity_at_turn_start()
 
@@ -91,12 +119,7 @@ class CombatManager:
         if is_player:
             c_stats = self.character.combat_stats
             base_def = c_stats["p_def"] if damage_type == "physical" else c_stats["m_def"]
-            status_def_bonus = 0
-            stat_key = "p_def" if damage_type == "physical" else "m_def"
-            for effect in self.character.data.status_effects:
-                if stat_key in effect.bonuses:
-                    status_def_bonus += effect.bonuses[stat_key]
-            return max(0, int(base_def + status_def_bonus))
+            return max(0, int(base_def))
         else:
             base_def = entity.get("defense", 0) if damage_type == "physical" else entity.get("m_defense", 0)
             status_def_bonus = 0
@@ -265,14 +288,19 @@ class CombatManager:
         is_player = (curr["type"] == "player")
         entity_ref = curr["ref"]
         
+        # 觸發回合開始事件
+        from core.trigger_engine import TriggerEngine
+        TriggerEngine.dispatch_event("on_turn_start", entity_ref, None, self)
+        
         skip_turn, log_msg = self._process_entity_status_tick(entity_ref, is_player)
         if log_msg:
             self.battle_logs.append(log_msg)
+            self.current_tick_logs.append(log_msg)
             
         if skip_turn:
             self.next_turn()
 
-    def _apply_damage(self, target, is_target_player: bool, damage: int, source_entity, is_source_player: bool) -> tuple[int, List[str]]:
+    def _apply_damage(self, target, is_target_player: bool, damage: int, source_entity, is_source_player: bool, context: Optional[Any] = None) -> tuple[int, List[str]]:
         logs = []
         final_dmg = damage
         
@@ -322,15 +350,42 @@ class CombatManager:
         # 3. 扣除實際生命值
         if final_dmg > 0:
             if is_target_player:
+                curr_hp = self.character.data.vitality.hp
+                if curr_hp > 0 and final_dmg >= curr_hp:
+                    # Lethal damage!
+                    setattr(self.character, "_death_prevented", False)
+                    from core.trigger_engine import TriggerEngine
+                    TriggerEngine.dispatch_event("on_fatal_damage", self.character, source_entity, self, damage=final_dmg, context=context)
+                    if getattr(self.character, "_death_prevented", False):
+                        final_dmg = curr_hp - 1
+                        logs.append("🛡️ 受到致命傷害時觸發免死效果，保留 1 點生命值！")
+                        setattr(self.character, "_death_prevented", False)
+
                 self.character.data.vitality.hp = max(0, self.character.data.vitality.hp - final_dmg)
                 self.character.save()
             else:
+                curr_hp = target.get("hp", 0)
+                if curr_hp > 0 and final_dmg >= curr_hp:
+                    # Lethal damage!
+                    target["_death_prevented"] = False
+                    from core.trigger_engine import TriggerEngine
+                    TriggerEngine.dispatch_event("on_fatal_damage", target, source_entity, self, damage=final_dmg, context=context)
+                    if target.get("_death_prevented", False):
+                        final_dmg = curr_hp - 1
+                        logs.append("🛡️ 受到致命傷害時觸發免死效果，保留 1 點生命值！")
+                        target["_death_prevented"] = False
+
                 target["hp"] = max(0, target["hp"] - final_dmg)
                 
+        # 觸發健康度低於閾值事件
+        from core.trigger_engine import TriggerEngine
+        target_ref = self.character if is_target_player else target
+        TriggerEngine.dispatch_event("on_health_below", target_ref, source_entity, self, damage=damage_before_shield, context=context)
+                 
         self._check_battle_status()
         return damage_before_shield, logs
 
-    async def player_attack(self, target_idx: Optional[int] = None) -> Dict[str, Any]:
+    async def _player_attack_raw(self, target_idx: Optional[int] = None) -> Dict[str, Any]:
         """玩家進行普通攻擊 (TRPG 1d20 風格)"""
         curr_before = self.get_current_entity()
         if curr_before["type"] != "player": return {"success": False, "msg": "不是玩家的回合。"}
@@ -387,8 +442,61 @@ class CombatManager:
         if self._has_status(target, is_player=False, status_name="Banish"):
             return {"success": False, "msg": f"🌀 目標 {target['name']} 處於放逐狀態，普通攻擊無法命中！"}
             
-        # 3. 傷害計算 (1d20 乘法公式)
-        dmg_roll = random.randint(1, 20)
+        # ActionContext for Hit/Crit Check
+        from core.contexts import ActionContext, DiceContext
+        from core.trigger_engine import TriggerEngine
+        
+        base_accuracy = c_stats.get("accuracy", 0.95)
+        if self._has_status(self.character, is_player=True, status_name="Blind"):
+            base_accuracy *= 0.5
+            
+        base_evasion = self._get_entity_evasion(target, is_player=False)
+        base_crit = c_stats.get("crit_rate", 0.05)
+        
+        act_ctx = ActionContext(
+            accuracy=base_accuracy,
+            evasion_rate=base_evasion,
+            crit_rate=base_crit,
+            damage_type=damage_type,
+            combat_context=self
+        )
+        
+        # 觸發命中前攔截
+        TriggerEngine.dispatch_interceptor("on_prepare", act_ctx, self.character, target)
+        
+        # 命中判定
+        is_hit = False
+        if act_ctx.is_absolute_hit:
+            is_hit = True
+        else:
+            evasion_rate = act_ctx.evasion_rate
+            hit_chance = 90 - (evasion_rate * 100)
+            hit_chance *= (act_ctx.accuracy / 0.95)
+            
+            if self._has_status(target, is_player=False, status_name="Invis"):
+                hit_chance *= 0.3
+                
+            is_hit = (random.randint(1, 100) <= hit_chance)
+
+        if not is_hit:
+            TriggerEngine.dispatch_event("on_miss", self.character, target, self)
+            TriggerEngine.dispatch_event("on_dodge", target, self.character, self)
+            if not self.is_finished:
+                self.next_turn()
+            return {"success": False, "msg": f"🛡️ {target['name']} 躲過了 {self.character.data.name} 的攻擊！"}
+
+        # 3. 傷害計算 (1d20 擲骰與攔截)
+        dice_ctx = DiceContext(dice_str="1d20", caster=self.character, combat_context=self)
+        TriggerEngine.dispatch_interceptor("on_dice", dice_ctx, self.character)
+        
+        if dice_ctx.roll_value is not None:
+            dmg_roll = dice_ctx.roll_value
+        else:
+            dmg_roll = random.randint(1, 20)
+            
+        dmg_roll += dice_ctx.roll_modifier
+        if dice_ctx.floor_value is not None:
+            dmg_roll = max(dmg_roll, dice_ctx.floor_value)
         
         # 判定 Bless 補底
         has_bless = self._has_status(self.character, is_player=True, status_name="Bless")
@@ -403,22 +511,39 @@ class CombatManager:
         base_power = (stat_val * roll_mult) + weapon_power
         
         # 4. 判定爆擊 (1.5x)
-        is_crit = random.random() < c_stats["crit_rate"]
+        is_crit = act_ctx.is_crit or (random.random() < act_ctx.crit_rate)
         crit_mult = 1.5 if is_crit else 1.0
         
         # 5. 計算總威力 (基 * 爆)
         total_power = base_power * crit_mult
         
+        # 傷害計算攔截 (如：無視防禦比例、傷害倍率)
+        act_ctx.raw_damage = total_power
+        TriggerEngine.dispatch_interceptor("on_calculate_damage", act_ctx, self.character, target)
+        
+        total_power *= act_ctx.damage_multiplier
+        
         # 6. 防禦力動態減免 (限制防禦力最大只能抵擋 80% 威力)
         defense = self._get_entity_defense(target, damage_type, is_player=False)
+        if act_ctx.defense_ignore_ratio > 0:
+            defense = int(defense * (1.0 - act_ctx.defense_ignore_ratio))
+            
         max_mitigation = total_power * 0.80
         effective_def = min(defense, max_mitigation)
         
         final_dmg = max(1.0, round(total_power - effective_def, 1))
         
         # 7. 應用傷害
-        actual_dmg, dmg_logs = self._apply_damage(target, is_target_player=False, damage=int(final_dmg), source_entity=self.character, is_source_player=True)
+        actual_dmg, dmg_logs = self._apply_damage(target, is_target_player=False, damage=int(final_dmg), source_entity=self.character, is_source_player=True, context=act_ctx)
         
+        # 觸發後置傷害與擊殺事件
+        TriggerEngine.dispatch_event("on_hit", self.character, target, self, damage=actual_dmg, context=act_ctx)
+        TriggerEngine.dispatch_event("on_damaged", target, self.character, self, damage=actual_dmg, context=act_ctx)
+        if is_crit:
+            TriggerEngine.dispatch_event("on_crit", self.character, target, self, damage=actual_dmg, context=act_ctx)
+        if target["hp"] <= 0:
+            TriggerEngine.dispatch_event("on_kill", self.character, target, self, damage=actual_dmg, context=act_ctx)
+            
         crit_tag = "✨ **爆擊！** " if is_crit else ""
         crit_info = f" * 💥1.5x" if is_crit else ""
         
@@ -442,7 +567,7 @@ class CombatManager:
             
         return {"success": True, "damage": actual_dmg, "is_crit": is_crit, "msg": msg}
 
-    async def monster_action(self) -> Dict[str, Any]:
+    async def _monster_action_raw(self) -> Dict[str, Any]:
         """處理當前怪物的 AI 行動 (TRPG 風格)"""
         curr_before = self.get_current_entity()
         if curr_before["type"] != "monster": return {"success": False}
@@ -532,23 +657,70 @@ class CombatManager:
             if self._has_status(target_entity, is_target_player, "Banish"):
                 return {"success": False, "msg": f"🌀 {target_name} 處於放逐狀態，{monster['name']} 的攻擊無法命中！"}
                 
-            # 3. 命中判定
-            evasion_rate = self._get_entity_evasion(target_entity, is_target_player)
-            hit_chance = 90 - (evasion_rate * 100)
+            # ActionContext for Hit check
+            from core.contexts import ActionContext, DiceContext
+            from core.trigger_engine import TriggerEngine
             
-            # 判定 Invis
-            if self._has_status(target_entity, is_target_player, "Invis"):
-                hit_chance *= 0.3
-                
-            if random.randint(1, 100) > hit_chance:
+            evasion_rate = self._get_entity_evasion(target_entity, is_target_player)
+            base_accuracy = 0.90
+            base_crit = 0.05
+            
+            damage_type = monster.get("damage_type", "physical")
+            act_ctx = ActionContext(
+                accuracy=base_accuracy,
+                evasion_rate=evasion_rate,
+                crit_rate=base_crit,
+                damage_type=damage_type,
+                combat_context=self
+            )
+            
+            # 觸發命中前攔截
+            TriggerEngine.dispatch_interceptor("on_prepare", act_ctx, monster, target_entity)
+
+            is_hit = False
+            if act_ctx.is_absolute_hit:
+                is_hit = True
+            else:
+                hit_chance = (act_ctx.accuracy * 100) - (act_ctx.evasion_rate * 100)
+                if self._has_status(target_entity, is_target_player, "Invis"):
+                    hit_chance *= 0.3
+                is_hit = (random.randint(1, 100) <= hit_chance)
+
+            if not is_hit:
+                TriggerEngine.dispatch_event("on_miss", monster, target_entity, self)
+                TriggerEngine.dispatch_event("on_dodge", target_entity, monster, self)
                 if is_target_player:
-                    return {"success": False, "msg": f"🛡️ {self.character.data.name} 靈巧地躲過了 {monster['name']} 的攻擊！ (迴避 {evasion_rate*100:.1f}%)"}
+                    return {"success": False, "msg": f"🛡️ {self.character.data.name} 靈巧地躲過了 {monster['name']} 的攻擊！ (迴避 {act_ctx.evasion_rate*100:.1f}%)"}
                 else:
                     return {"success": False, "msg": f"🛡️ {target_name} 躲過了 {monster['name']} 的攻擊！"}
                     
+            # 3. 傷害計算 (1d20 擲骰與攔截)
+            dice_ctx = DiceContext(dice_str="1d20", caster=monster, combat_context=self)
+            TriggerEngine.dispatch_interceptor("on_dice", dice_ctx, monster)
+            
+            if dice_ctx.roll_value is not None:
+                m_roll = dice_ctx.roll_value
+            else:
+                m_roll = random.randint(1, 20)
+                
+            m_roll += dice_ctx.roll_modifier
+            if dice_ctx.floor_value is not None:
+                m_roll = max(m_roll, dice_ctx.floor_value)
+                
+            m_roll_mult = 0.5 + (m_roll * 0.05)
+            total_m_power = monster["attack"] * m_roll_mult
+            
+            # 傷害計算前攔截
+            act_ctx.raw_damage = total_m_power
+            TriggerEngine.dispatch_interceptor("on_calculate_damage", act_ctx, monster, target_entity)
+            
+            total_m_power *= act_ctx.damage_multiplier
+            
             # 4. 減傷計算
             damage_type = monster.get("damage_type", "physical")
             defense = self._get_entity_defense(target_entity, damage_type, is_player=is_target_player)
+            if act_ctx.defense_ignore_ratio > 0:
+                defense = int(defense * (1.0 - act_ctx.defense_ignore_ratio))
             
             # 韌性減傷 (比例減傷，僅對玩家生效)
             tenacity_reduction = 1.0
@@ -556,19 +728,23 @@ class CombatManager:
                 tenacity_reduction = 1.0 - (c_stats["tenacity"] / 1000)
                 tenacity_reduction = max(0.5, tenacity_reduction)
                 
-            # 怪物傷害：1d20 效能倍率 * (基礎攻擊力)
-            m_roll = random.randint(1, 20)
-            m_roll_mult = 0.5 + (m_roll * 0.05)
-            total_m_power = monster["attack"] * m_roll_mult
-            
-            # 最終傷害 = (威力 - 限制防禦力最大只能抵擋 80% 威力) * 韌性比例減傷
             max_mitigation = total_m_power * 0.80
             effective_def = min(defense, max_mitigation)
             
             final_dmg = max(1.0, round((total_m_power - effective_def) * tenacity_reduction, 1))
             
             # 5. 應用傷害
-            actual_dmg, dmg_logs = self._apply_damage(target_entity, is_target_player, int(final_dmg), monster, is_source_player=False)
+            actual_dmg, dmg_logs = self._apply_damage(target_entity, is_target_player, int(final_dmg), monster, is_source_player=False, context=act_ctx)
+            
+            # 觸發後置傷害與擊殺事件
+            TriggerEngine.dispatch_event("on_hit", monster, target_entity, self, damage=actual_dmg, context=act_ctx)
+            TriggerEngine.dispatch_event("on_damaged", target_entity, monster, self, damage=actual_dmg, context=act_ctx)
+            if target_entity == self.character:
+                target_hp = self.character.data.vitality.hp
+            else:
+                target_hp = target_entity["hp"]
+            if target_hp <= 0:
+                TriggerEngine.dispatch_event("on_kill", monster, target_entity, self, damage=actual_dmg, context=act_ctx)
             
             # 6. 組裝日誌與說明
             lvl_bonus = self.character.data.level // 2 if is_target_player else target_entity.get("level", 1) // 2
@@ -598,7 +774,7 @@ class CombatManager:
                 
             return {"success": True, "damage": actual_dmg, "msg": msg}
 
-    async def cast_skill(self, skill: Skill, target_idx: Optional[int] = None) -> Dict[str, Any]:
+    async def _cast_skill_raw(self, skill: Skill, target_idx: Optional[int] = None) -> Dict[str, Any]:
         """
         在戰鬥中施展技能，連動 SkillProcessor 並套用流程控制標記與狀態。
         """
@@ -676,8 +852,10 @@ class CombatManager:
                 next_target = self.monsters[next_target_idx]
                 
                 chain_val = round(res.get("final_value", 0) * 0.5, 1)
-                next_target["hp"] -= int(chain_val)
-                logs.append(f"⚡ 觸發【連鎖彈射】：對 {next_target['name']} 造成了 {chain_val} 點彈射傷害 (傷害減半)！")
+                actual_dmg, dmg_logs = self._apply_damage(next_target, is_target_player=False, damage=int(chain_val), source_entity=self.character, is_source_player=True)
+                logs.append(f"⚡ 觸發【連鎖彈射】：對 {next_target['name']} 造成了 {actual_dmg} 點彈射傷害 (傷害減半)！")
+                if dmg_logs:
+                    logs.extend(dmg_logs)
                 if next_target["hp"] <= 0:
                     logs.append(f"💀 {next_target['name']} 倒下了！")
                     
@@ -759,3 +937,22 @@ class CombatManager:
             {"index": i, "name": m["name"], "hp": m["hp"], "max_hp": m["max_hp"], "level": m["level"]}
             for i, m in enumerate(self.monsters) if m["hp"] > 0
         ]
+
+    def _wrap_combat_message(self, res: Dict[str, Any]) -> Dict[str, Any]:
+        if "msg" in res and self.current_tick_logs:
+            tick_prefix = "\n".join(self.current_tick_logs) + "\n"
+            res["msg"] = tick_prefix + res["msg"]
+        self.current_tick_logs.clear()
+        return res
+
+    async def player_attack(self, target_idx: Optional[int] = None) -> Dict[str, Any]:
+        res = await self._player_attack_raw(target_idx)
+        return self._wrap_combat_message(res)
+
+    async def monster_action(self) -> Dict[str, Any]:
+        res = await self._monster_action_raw()
+        return self._wrap_combat_message(res)
+
+    async def cast_skill(self, skill: Skill, target_idx: Optional[int] = None) -> Dict[str, Any]:
+        res = await self._cast_skill_raw(skill, target_idx)
+        return self._wrap_combat_message(res)

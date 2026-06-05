@@ -11,14 +11,16 @@ class LMStudioClient:
     async def call(self,
                   prompt: str,
                   system_prompt: Optional[str] = None,
-                  temperature: float = 0.7) -> str:
+                  temperature: float = 0.7,
+                  max_tokens: int = 16384) -> str:
         messages = self._build_messages(prompt, system_prompt)
 
         try:
             response = await self.client.chat.completions.create(
                 model=self.model,
                 messages=messages,
-                temperature=temperature
+                temperature=temperature,
+                max_tokens=max_tokens
             )
             return response.choices[0].message.content
         except Exception as e:
@@ -27,7 +29,8 @@ class LMStudioClient:
     async def stream(self,
                     prompt: str,
                     system_prompt: Optional[str] = None,
-                    temperature: float = 0.7) -> AsyncGenerator[str, None]:
+                    temperature: float = 0.7,
+                    max_tokens: int = 16384) -> AsyncGenerator[str, None]:
         messages = self._build_messages(prompt, system_prompt)
 
         try:
@@ -35,7 +38,8 @@ class LMStudioClient:
                 model=self.model,
                 messages=messages,
                 stream=True,
-                temperature=temperature
+                temperature=temperature,
+                max_tokens=max_tokens
             )
 
             async for chunk in stream_response:

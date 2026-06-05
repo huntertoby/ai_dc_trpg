@@ -1,5 +1,6 @@
 import asyncio
 import discord
+import utils.discord_patches
 from discord.ext import commands
 from discord import app_commands
 import os
@@ -40,6 +41,37 @@ async def on_ready():
         print(f"🔄 成功同步了 {len(synced)} 個斜線指令！")
     except Exception as e:
         print(f"❌ 同步指令時發生錯誤: {e}")
+
+
+@bot.tree.error
+async def on_app_command_error(interaction: discord.Interaction, error: app_commands.AppCommandError):
+    # 獲取原始異常
+    original_error = getattr(error, "original", error)
+    
+    import traceback
+    print(f"❌ 執行斜線指令時發生未捕獲的錯誤: {error}")
+    traceback.print_exception(type(original_error), original_error, original_error.__traceback__)
+    
+    error_msg = f"❌ 執行指令時發生錯誤：{original_error}"
+    if len(error_msg) > 2000:
+        error_msg = error_msg[:1990] + "..."
+        
+    if interaction.response.is_done():
+        try:
+            # 優先嘗試編輯原始的回應 (能消除 Discord 的「正在思考...」狀態)
+            await interaction.edit_original_response(content=error_msg, embed=None, view=None)
+        except Exception:
+            try:
+                # 備用方案：如果編輯失敗，嘗試發送 followup 訊息
+                await interaction.followup.send(error_msg, ephemeral=True)
+            except Exception:
+                pass
+    else:
+        try:
+            # 如果還沒有回應或 defer，直接回應
+            await interaction.response.send_message(error_msg, ephemeral=True)
+        except Exception:
+            pass
 
 
 @bot.tree.command(name="生成角色", description="創建一個新角色 (僅自己可見)")
@@ -243,12 +275,46 @@ async def debug_equipment(
     embed.add_field(name="✨ 平衡後數值", value=f"```md\n{stats_text or '*無屬性加成*'}```", inline=False)
     if eq.special_effect:
         embed.add_field(name="🔮 特殊效果", value=f"*{eq.special_effect}*", inline=False)
+    if eq.executable_triggers:
+        import json
+        triggers_json = json.dumps(eq.executable_triggers, indent=2, ensure_ascii=False)
+        embed.add_field(name="⚙️ 觸發器機制 (Triggers)", value=f"```json\n{triggers_json}\n```", inline=False)
     
     user_id = str(interaction.user.id)
     char = Character.load(user_id)
     if char: char.add_item(eq)
     
     await interaction.followup.send(embed=embed, ephemeral=True)
+
+@debug_group.command(name="t1item", description="測試 T1 專用裝備特效 JSON 生成，直接輸出觸發器 JSON")
+async def debug_t1item(
+    interaction: discord.Interaction, 
+    description: str
+):
+    await interaction.response.defer(ephemeral=True)
+    eq = await generate_equipment_by_ai(
+        description=description, 
+        item_level=100, 
+        tier="T1", 
+        slot_type="main_hand", 
+        llm_client=llm_client
+    )
+    if not eq:
+        await interaction.followup.send("❌ 裝備生成失敗。", ephemeral=True)
+        return
+
+    import json
+    import io
+    triggers_json = json.dumps(eq.executable_triggers, indent=2, ensure_ascii=False)
+    output_text = f"```json\n{triggers_json}\n```"
+    if len(output_text) > 2000:
+        file = discord.File(
+            fp=io.BytesIO(triggers_json.encode('utf-8')),
+            filename="t1item_triggers.json"
+        )
+        await interaction.followup.send("⚠️ 內容過長，已改用檔案發送：", file=file, ephemeral=True)
+    else:
+        await interaction.followup.send(output_text, ephemeral=True)
 
 @debug_group.command(name="skill", description="測試 AI 技能生成與解析能力")
 async def debug_skill(
@@ -269,6 +335,10 @@ async def debug_skill(
         color=discord.Color.red()
     )
     embed.add_field(name="⚙️ 機制", value=f"**消耗**: {m.cost}\n**公式**: {m.formula.base_stat}", inline=False)
+    if skill.executable_triggers:
+        import json
+        triggers_json = json.dumps(skill.executable_triggers, indent=2, ensure_ascii=False)
+        embed.add_field(name="⚙️ 觸發器機制 (Triggers)", value=f"```json\n{triggers_json}\n```", inline=False)
     await interaction.followup.send(embed=embed, ephemeral=True)
 
 bot.tree.add_command(debug_group)

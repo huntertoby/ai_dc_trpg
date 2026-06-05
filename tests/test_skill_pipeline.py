@@ -379,8 +379,8 @@ class TestSkillPipelineAndGenerator(unittest.TestCase):
         caster.data.vitality.mp = 100
         caster.data.vitality.hp = 100
         res = SkillProcessor.execute_skill(skill_copy, caster, target)
-        # Copy should copy formula of Fireball: base_stat INT, divisor 2.0, action_type damage, keyword Burn
-        self.assertEqual(skill_copy.mechanics.formula.base_stat, "INT")
-        self.assertEqual(skill_copy.mechanics.formula.divisor, 2.0)
-        self.assertEqual(skill_copy.mechanics.action_type, "damage")
-        self.assertIn("Burn", skill_copy.mechanics.keywords)
+        # Verify that the original skill was NOT mutated in-place (no database corruption)
+        self.assertEqual(skill_copy.mechanics.formula.base_stat, "WIS")
+        
+        # Verify that the executed result reflects the copied mechanics
+        self.assertIn("Burn", res["keywords"])

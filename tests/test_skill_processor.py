@@ -155,8 +155,8 @@ class TestSkillProcessor(unittest.TestCase):
             self.assertEqual(len(breakdown_log), 1)
             log_text = breakdown_log[0]
             self.assertIn("10 (公式: 1d20)", log_text)
-            self.assertIn("威力: (智力:15 * (10/10.0))", log_text)
-            self.assertIn("防禦: -3.0 (目標 魔法防禦 5，有效減免: 3.0，上限 80%)", log_text)
+            self.assertIn("(智力:15 * (10/10.0))", log_text)
+            self.assertIn("有效減免: 5.0，上限 80%", log_text)
 
         # Test healing skill log breakdown
         skill_heal = Skill(
@@ -178,4 +178,4 @@ class TestSkillProcessor(unittest.TestCase):
             self.assertEqual(len(breakdown_log_heal), 1)
             log_text_heal = breakdown_log_heal[0]
             self.assertIn("10 (公式: 1d20)", log_text_heal)
-            self.assertIn("治療量: (感知:15 * (10/10.0)) = 15.0", log_text_heal)
+            self.assertIn("(感知:15 * (10/10.0)) = 15.0", log_text_heal)

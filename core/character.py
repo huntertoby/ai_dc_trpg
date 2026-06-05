@@ -327,15 +327,23 @@ class Character:
     def combat_stats(self) -> dict:
         ts = self.total_stats
         bonuses = self.get_total_bonuses()
-        def get_bonus(name: str) -> float: return bonuses.get(name, 0.0)
+        
+        # 加上狀態效果的屬性加成
+        status_bonuses = {}
+        for effect in self.data.status_effects:
+            for stat, val in effect.bonuses.items():
+                status_bonuses[stat] = status_bonuses.get(stat, 0.0) + val
+                
+        def get_bonus(name: str) -> float:
+            return bonuses.get(name, 0.0) + status_bonuses.get(name, 0.0)
         
         # 衍生雙防計算 (由屬性加權 + 等級保底得出)
         lvl_bonus = self.data.level // 2
         
-        # 物理防禦：體質核心(0.7) + 力量(0.2) + 敏捷(0.1) + 等級加成
-        p_def = (ts["CON"] * 0.7) + (ts["STR"] * 0.2) + (ts["DEX"] * 0.1) + lvl_bonus
-        # 魔法防禦：感知核心(0.7) + 體質韌性(0.2) + 智力(0.1) + 等級加成
-        m_def = (ts["WIS"] * 0.7) + (ts["CON"] * 0.2) + (ts["INT"] * 0.1) + lvl_bonus
+        # 物理防禦：體質核心(0.7) + 力量(0.2) + 敏捷(0.1) + 等級加成 + 裝備/狀態直接加成
+        p_def = (ts["CON"] * 0.7) + (ts["STR"] * 0.2) + (ts["DEX"] * 0.1) + lvl_bonus + get_bonus("p_def")
+        # 魔法防禦：感知核心(0.7) + 體質韌性(0.2) + 智力(0.1) + 等級加成 + 裝備/狀態直接加成
+        m_def = (ts["WIS"] * 0.7) + (ts["CON"] * 0.2) + (ts["INT"] * 0.1) + lvl_bonus + get_bonus("m_def")
         
         main_off = max(ts["DEX"], ts["INT"], ts["WIS"])
         

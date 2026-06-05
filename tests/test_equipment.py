@@ -48,7 +48,19 @@ class TestEquipment(unittest.TestCase):
         self.assertLessEqual(total_primary, 11)
         self.assertGreater(total_primary, 0)
         
-        # Sub stats (crit_rate) should be restricted by T3 max sub slots = 2
-        # Cost check: crit_rate weight is 1000.0, sub budget is 0.375
-        # So crit_rate should be capped to a very small amount
         self.assertLessEqual(clamped.bonuses.get("crit_rate", 0), 0.02)
+
+    def test_validate_and_clamp_filters_unauthorized_bonuses(self):
+        # Create equipment with valid and invalid bonuses
+        eq = Equipment(
+            name="測試戒指", slot_type="trinket_1", tier="T3", item_level=10,
+            bonuses={
+                "STR": 10.0,            # Valid primary
+                "crit_rate": 0.05,      # Valid sub
+                "unauthorized_stat": 5.0 # Unauthorized, should be removed
+            }
+        )
+        clamped = EquipmentBalancer.validate_and_clamp(eq)
+        self.assertIn("STR", clamped.bonuses)
+        self.assertIn("crit_rate", clamped.bonuses)
+        self.assertNotIn("unauthorized_stat", clamped.bonuses)

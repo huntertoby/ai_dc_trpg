@@ -36,6 +36,7 @@ def get_entity_attr(entity, key: str, default: Any = 0) -> Any:
                     wis_val = get_entity_stat(entity, "WIS")
                     return 100 + wis_val * 5
                 if key == "stamina": return vitality.stamina
+                if key == "temp_hp": return vitality.temp_hp
                 if key == "max_stamina":
                     if hasattr(entity, "max_stamina") and not is_mock(getattr(entity, "max_stamina")):
                         return entity.max_stamina
@@ -43,10 +44,8 @@ def get_entity_attr(entity, key: str, default: Any = 0) -> Any:
                     return 100 + con * 5
                     
     if isinstance(entity, dict):
-        if key == "hp": return entity.get("hp", default)
-        if key == "max_hp": return entity.get("max_hp", default)
-        if key == "mp": return entity.get("mp", default)
-        if key == "max_mp": return entity.get("max_mp", default)
+        if key in ["hp", "max_hp", "mp", "max_mp", "sanity", "max_sanity", "stamina", "max_stamina", "temp_hp"]:
+            return entity.get(key, default)
         
     if not is_mock(entity) and hasattr(entity, key):
         val = getattr(entity, key)
@@ -54,7 +53,7 @@ def get_entity_attr(entity, key: str, default: Any = 0) -> Any:
             return val
             
     return default
-
+ 
 def set_entity_attr(entity, key: str, value: Any):
     if hasattr(entity, "data"):
         data = entity.data
@@ -73,8 +72,11 @@ def set_entity_attr(entity, key: str, value: Any):
                 if key == "stamina":
                     vitality.stamina = value
                     return
+                if key == "temp_hp":
+                    vitality.temp_hp = value
+                    return
     if isinstance(entity, dict):
-        if key in ["hp", "mp", "sanity", "stamina"]:
+        if key in ["hp", "mp", "sanity", "stamina", "temp_hp"]:
             entity[key] = value
             return
     if not is_mock(entity) and hasattr(entity, key):
@@ -82,6 +84,10 @@ def set_entity_attr(entity, key: str, value: Any):
 
 def get_entity_stat(entity, stat_name: str) -> int:
     stat_name = stat_name.upper()
+    if stat_name == "MAX_HP":
+        return get_entity_attr(entity, "max_hp", 100)
+    if stat_name == "MAX_MP":
+        return get_entity_attr(entity, "max_mp", 50)
     if hasattr(entity, "total_stats"):
         stats = entity.total_stats
         if stats is not None and not is_mock(stats):
@@ -127,7 +133,16 @@ def get_entity_combat_stat(entity, stat_name: str, default: Any = 0) -> Any:
         
     return default
 
-def add_entity_status_effect(entity, name: str, description: str, duration: int, bonuses: dict = None):
+def add_entity_status_effect(
+    entity, 
+    name: str, 
+    description: str, 
+    duration: int, 
+    bonuses: dict = None, 
+    executable_triggers: list = None,
+    max_stacks: int = 5,
+    trigger_limit: int = 0
+):
     # 檢查是否為 Mock 且沒有 data
     if is_mock(entity) and not hasattr(entity, "data"):
         return
@@ -139,14 +154,41 @@ def add_entity_status_effect(entity, name: str, description: str, duration: int,
         if SkillExecutionPipeline._has_status(entity, "Immune") or SkillExecutionPipeline._has_status(entity, "霸體"):
             return
             
+    # Stacking logic: if status already exists, increment stacks and reset duration
+    existing_effect = None
+    if hasattr(entity, "data") and hasattr(entity.data, "status_effects") and entity.data.status_effects is not None:
+        existing_effect = next((e for e in entity.data.status_effects if e.name == name), None)
+    elif isinstance(entity, dict) and "status_effects" in entity:
+        existing_effect = next((e for e in entity["status_effects"] if (e.name == name if hasattr(e, "name") else e.get("name") == name)), None)
+
+    if existing_effect:
+        if hasattr(existing_effect, "stacks"):
+            existing_effect.stacks = min(existing_effect.stacks + 1, existing_effect.max_stacks)
+            existing_effect.duration = duration
+        else:
+            curr_stacks = existing_effect.get("stacks", 1)
+            m_stacks = existing_effect.get("max_stacks", max_stacks)
+            existing_effect["stacks"] = min(curr_stacks + 1, m_stacks)
+            existing_effect["duration"] = duration
+        
+        if hasattr(entity, "save") and not is_mock(getattr(entity, "save")):
+            entity.save()
+        return
+
     from core.models import StatusEffect
     bonuses = bonuses or {}
+    executable_triggers = executable_triggers or []
     effect = StatusEffect(
         name=name,
         description=description,
         duration_type="turns",
         duration=duration,
-        bonuses=bonuses
+        bonuses=bonuses,
+        executable_triggers=executable_triggers,
+        stacks=1,
+        max_stacks=max_stacks,
+        trigger_limit=trigger_limit,
+        trigger_count=0
     )
     if hasattr(entity, "data"):
         data = entity.data
@@ -162,7 +204,12 @@ def add_entity_status_effect(entity, name: str, description: str, duration: int,
             "name": name,
             "description": description,
             "duration": duration,
-            "bonuses": bonuses
+            "bonuses": bonuses,
+            "executable_triggers": executable_triggers,
+            "stacks": 1,
+            "max_stacks": max_stacks,
+            "trigger_limit": trigger_limit,
+            "trigger_count": 0
         })
 
 class SkillExecutionPipeline:
@@ -170,6 +217,10 @@ class SkillExecutionPipeline:
     def execute(cls, skill: Skill, caster: Any, target: Optional[Any] = None, combat_context: Optional[Any] = None) -> Dict[str, Any]:
         logs = []
         control_flags = {}
+        
+        # 判定施法者自身是否處於放逐 (Banish)
+        if cls._has_status(caster, "Banish"):
+            raise ValueError("自身處於放逐狀態，無法使用技能")
         
         # 1. 取得基本屬性
         keywords = set(skill.mechanics.keywords)
@@ -228,11 +279,14 @@ class SkillExecutionPipeline:
             
         current_mp = get_entity_attr(caster, "mp", 0)
         current_san = get_entity_attr(caster, "sanity", 100)
+        current_stamina = get_entity_attr(caster, "stamina", 100)
         
         if current_mp < mp_cost:
             raise ValueError(f"法力值不足，需要 {mp_cost} MP，當前 {current_mp}")
         if current_san < san_cost:
             raise ValueError(f"理智值不足，需要 {san_cost} SAN，當前 {current_san}")
+        if current_stamina < stamina_cost:
+            raise ValueError(f"精力值不足，需要 {stamina_cost} 精力，當前 {current_stamina}")
             
         # Keyword: Sacrifice (犧牲)：額外扣除玩家當前 HP 的 10%，倍率 +1.0
         if "Sacrifice" in keywords:
@@ -274,16 +328,51 @@ class SkillExecutionPipeline:
             logs.append(f"🌀 目標 {cls._get_name(target)} 處於放逐狀態，技能無法命中！")
             return {"success": False, "msg": "技能因目標處於放逐狀態而失效。", "logs": logs}
             
-        accuracy = get_entity_combat_stat(caster, "accuracy", 0.95)
+        from core.contexts import ActionContext, DiceContext
+        from core.trigger_engine import TriggerEngine
+
+        # Setup ActionContext
+        base_accuracy = get_entity_combat_stat(caster, "accuracy", 0.95)
         if cls._has_status(caster, "Blind"):
-            accuracy *= 0.5
+            base_accuracy *= 0.5
             logs.append("👁️ 【盲目】降低了施法者的命中率！")
             
-        if target_type == "single" and cls._has_status(target, "Invis"):
-            accuracy *= 0.3
-            logs.append(f"👤 目標 {cls._get_name(target)} 處於隱身狀態，極難被選中！")
+        base_evasion = 0.0
             
-        if random.random() > accuracy:
+        if target and target_type == "single" and cls._has_status(target, "Invis"):
+            base_accuracy *= 0.3
+            logs.append(f"👤 目標 {cls._get_name(target)} 處於隱身狀態，極難被選中！")
+
+        base_crit = get_entity_combat_stat(caster, "crit_rate", 0.05)
+
+        skill_dmg_type = "physical"
+        if skill.mechanics.formula and skill.mechanics.formula.base_stat in ["INT", "WIS", "CHA"]:
+            skill_dmg_type = "magical"
+
+        act_ctx = ActionContext(
+            accuracy=base_accuracy,
+            evasion_rate=base_evasion,
+            crit_rate=base_crit,
+            damage_type=skill_dmg_type,
+            combat_context=combat_context
+        )
+
+        # 觸發技能命中前攔截
+        TriggerEngine.dispatch_interceptor("on_prepare", act_ctx, caster, target)
+
+        is_hit = False
+        if act_ctx.is_absolute_hit:
+            is_hit = True
+            logs.append("✨ 觸發【絕對命中】：技能無視迴避率！")
+        else:
+            # Check accuracy vs evasion
+            hit_chance = act_ctx.accuracy * (1.0 - act_ctx.evasion_rate)
+            is_hit = (random.random() <= hit_chance)
+
+        if not is_hit:
+            TriggerEngine.dispatch_event("on_miss", caster, target, combat_context)
+            if target:
+                TriggerEngine.dispatch_event("on_dodge", target, caster, combat_context)
             logs.append("❌ 技能未命中！")
             return {"success": False, "msg": "技能未命中目標。", "logs": logs}
 
@@ -298,15 +387,34 @@ class SkillExecutionPipeline:
             "WIS": get_entity_stat(caster, "WIS"),
             "CHA": get_entity_stat(caster, "CHA")
         }
-        base_val, dice_roll = SkillProcessor.calculate_base_value(skill, stats_dict)
+        
         formula = skill.mechanics.formula
         stat_val = stats_dict.get(formula.base_stat, 5)
-        
+
+        # DiceContext for skill roll
+        dice_ctx = DiceContext(dice_str=formula.dice, caster=caster, combat_context=combat_context)
+        TriggerEngine.dispatch_interceptor("on_dice", dice_ctx, caster)
+
+        if dice_ctx.roll_value is not None:
+            dice_roll = dice_ctx.roll_value
+        else:
+            dice_roll = SkillProcessor.roll_dice(dice_ctx.dice_str)
+
+        dice_roll += dice_ctx.roll_modifier
+        if dice_ctx.floor_value is not None:
+            dice_roll = max(dice_roll, dice_ctx.floor_value)
+
         # 祝福 (Bless) 骰子補底：小於 5 補底為 10
         if cls._has_status(caster, "Bless") and dice_roll <= 5:
             dice_roll = 10
             logs.append("🌟 觸發【祝福】補底：擲骰點數小於 5，自動補底提升至 10！")
             # 重新計算 base_val
+            if formula.type == "multiplier":
+                multiplier = dice_roll / formula.divisor
+                base_val = stat_val * multiplier
+            else:
+                base_val = dice_roll + stat_val
+        else:
             if formula.type == "multiplier":
                 multiplier = dice_roll / formula.divisor
                 base_val = stat_val * multiplier
@@ -358,6 +466,23 @@ class SkillExecutionPipeline:
         if "Pierce" in keywords:
             target_def = int(target_def * 0.5)
             logs.append("🎯 觸發【穿透】：目標防禦力減半計算。")
+            
+        # 觸發傷害計算前攔截
+        act_ctx.raw_damage = base_val
+        TriggerEngine.dispatch_interceptor("on_calculate_damage", act_ctx, caster, target)
+        
+        base_val *= act_ctx.damage_multiplier
+        
+        # 判定技能爆擊 (1.5x)
+        is_crit = act_ctx.is_crit or (random.random() < act_ctx.crit_rate)
+        act_ctx.is_crit = is_crit
+        if is_crit:
+            base_val *= 1.5
+            logs.append("✨ **技能爆擊！** 技能基礎威力提升 50%！")
+
+        if act_ctx.defense_ignore_ratio > 0:
+            target_def = int(target_def * (1.0 - act_ctx.defense_ignore_ratio))
+            logs.append(f"🎯 觸發無視防禦：無視了 {act_ctx.defense_ignore_ratio*100:.0f}% 的防禦力。")
             
         final_value = base_val
         effective_def = 0
@@ -414,31 +539,38 @@ class SkillExecutionPipeline:
                 logs.append(f"🎲 【豪賭反噬】對施法者自身造成了 {backlash} 點傷害！")
                 final_value = 0.0
             else:
-                # 優先扣除臨時生命值 temp_hp (護盾機制)
-                curr_temp = get_entity_attr(target, "temp_hp", 0)
-                dmg_to_apply = int(final_value)
-                
                 # Multi-hit (多重打擊) 拆分處理
                 if "Multi-hit" in keywords:
                     hits_count = random.randint(3, 5)
                     split_val = round(final_value / hits_count, 1)
-                    control_flags["multi_hits"] = [split_val] * hits_count
+                    hits = [split_val] * hits_count
                     logs.append(f"⚔️ 觸發【多重打擊】：將總傷害拆分為 {hits_count} 次打擊 ({split_val}/次) 連續結算！")
-                
-                if curr_temp > 0:
-                    if curr_temp >= dmg_to_apply:
-                        set_entity_attr(target, "temp_hp", curr_temp - dmg_to_apply)
-                        logs.append(f"🛡️ 護盾 (temp_hp) 抵擋了所有傷害！剩餘護盾：{curr_temp - dmg_to_apply}")
-                        dmg_to_apply = 0
-                    else:
-                        dmg_to_apply -= curr_temp
-                        set_entity_attr(target, "temp_hp", 0)
-                        logs.append(f"🛡️ 護盾 (temp_hp) 被擊破，抵擋了 {curr_temp} 點傷害！")
-                
-                if dmg_to_apply > 0:
-                    curr_hp = get_entity_attr(target, "hp", 100)
-                    set_entity_attr(target, "hp", max(0, curr_hp - dmg_to_apply))
+                else:
+                    hits = [final_value]
+
+                total_applied_dmg = 0
+                for idx, hit_dmg in enumerate(hits):
+                    curr_temp = get_entity_attr(target, "temp_hp", 0)
+                    dmg_to_apply = int(hit_dmg)
                     
+                    if curr_temp > 0:
+                        if curr_temp >= dmg_to_apply:
+                            set_entity_attr(target, "temp_hp", curr_temp - dmg_to_apply)
+                            logs.append(f"🛡️ [第 {idx+1} 擊] 護盾 (temp_hp) 抵擋了 {dmg_to_apply} 點傷害！剩餘護盾：{curr_temp - dmg_to_apply}")
+                            dmg_to_apply = 0
+                        else:
+                            dmg_to_apply -= curr_temp
+                            set_entity_attr(target, "temp_hp", 0)
+                            logs.append(f"🛡️ [第 {idx+1} 擊] 護盾 (temp_hp) 被擊破，抵擋了 {curr_temp} 點傷害！")
+                    
+                    if dmg_to_apply > 0:
+                        curr_hp = get_entity_attr(target, "hp", 100)
+                        set_entity_attr(target, "hp", max(0, curr_hp - dmg_to_apply))
+                        total_applied_dmg += dmg_to_apply
+                        if len(hits) > 1:
+                            logs.append(f"💥 [第 {idx+1} 擊] 對 {cls._get_name(target)} 造成了 {dmg_to_apply} 點傷害！")
+
+                if total_applied_dmg > 0 or len(hits) == 1:
                     stat_name = STAT_TRANSLATIONS.get(formula.base_stat, formula.base_stat)
                     if formula.type == "multiplier":
                         calc_formula_str = f"{stat_name}:{stat_val} * ({dice_roll}/{formula.divisor})"
@@ -478,7 +610,21 @@ class SkillExecutionPipeline:
                         f"\n 📊 **威力**: ({calc_formula_str}){execute_mult} = {final_value:.1f}"
                         f"\n 🛡️ **防禦**: -{effective_def:.1f} (目標 {defense_type_name} {def_str}，有效減免: {effective_def:.1f}，上限 80%)"
                     )
-                    logs.append(f"💥 對 {cls._get_name(target)} 造成了 {dmg_to_apply} 點真實傷害！" + calc_info)
+                    if len(hits) > 1:
+                        logs.append(f"💥 總計對 {cls._get_name(target)} 造成了 {total_applied_dmg} 點真實傷害！" + calc_info)
+                    else:
+                        logs.append(f"💥 對 {cls._get_name(target)} 造成了 {total_applied_dmg} 點真實傷害！" + calc_info)
+                        
+                    # 觸發後置傷害與擊殺事件
+                    from core.trigger_engine import TriggerEngine
+                    TriggerEngine.dispatch_event("on_hit", caster, target, combat_context, damage=total_applied_dmg, context=act_ctx)
+                    TriggerEngine.dispatch_event("on_damaged", target, caster, combat_context, damage=total_applied_dmg, context=act_ctx)
+                    if act_ctx.is_crit:
+                        TriggerEngine.dispatch_event("on_crit", caster, target, combat_context, damage=total_applied_dmg, context=act_ctx)
+                    
+                    target_hp = get_entity_attr(target, "hp", 0)
+                    if target_hp <= 0:
+                        TriggerEngine.dispatch_event("on_kill", caster, target, combat_context, damage=total_applied_dmg, context=act_ctx)
                 
                 # Lifesteal (吸血)：實際造成傷害的 30% 進行回復 (update_vitality)
                 if "Lifesteal" in keywords:
@@ -490,6 +636,10 @@ class SkillExecutionPipeline:
                         max_hp = get_entity_attr(caster, "max_hp", 100)
                         set_entity_attr(caster, "hp", min(max_hp, curr_hp + heal_amt))
                     logs.append(f"🩸 觸發【吸血】：回復了施法者 {heal_amt} 點生命值。")
+                    
+                    if heal_amt > 0:
+                        from core.trigger_engine import TriggerEngine
+                        TriggerEngine.dispatch_event("on_health_up", caster, None, combat_context)
                     
                 if "Vampiric_Aura" in keywords:
                     add_entity_status_effect(caster, "Vampiric_Aura", "吸血光環中", 3)
@@ -507,6 +657,10 @@ class SkillExecutionPipeline:
                 target.update_vitality(hp=curr_hp + int(final_value))
             else:
                 set_entity_attr(target, "hp", min(max_hp, curr_hp + int(final_value)))
+                
+            if final_value > 0:
+                from core.trigger_engine import TriggerEngine
+                TriggerEngine.dispatch_event("on_health_up", target, caster, combat_context)
                 
             stat_name = STAT_TRANSLATIONS.get(formula.base_stat, formula.base_stat)
             if formula.type == "multiplier":
@@ -526,6 +680,9 @@ class SkillExecutionPipeline:
         # ---------------------------------------------------------
         # Phase 6: Status Application (狀態附加)
         # ---------------------------------------------------------
+        if "Banish" in keywords:
+            add_entity_status_effect(target, "Banish", "放逐狀態：免疫所有技能與攻擊且無法行動", 2)
+            logs.append(f"🌀 施加【放逐】給 {cls._get_name(target)}，持續 2 回合。")
         if "Stun" in keywords:
             add_entity_status_effect(target, "Stun", "暈眩：無法行動", 1)
             control_flags["stun_active"] = True
@@ -749,6 +906,10 @@ class SkillProcessor:
             if formula.divisor > original:
                 print(f"⚖️ 技能 {skill.name} ({skill.tier}) 分母已從 {original} 校正為 {formula.divisor} (AoE: {skill.mechanics.target_type == 'aoe'})")
         
+        # 額外防防呆：只有 T1 (傳說) 技能允許擁有 triggers，非 T1 清空
+        if skill.tier != "T1":
+            skill.executable_triggers = []
+
         return skill
 
     @classmethod
@@ -774,10 +935,13 @@ class SkillProcessor:
         """
         執行技能的預運算邏輯，使用生命週期管道。
         """
+        import copy
+        skill = copy.deepcopy(skill)
         res = SkillExecutionPipeline.execute(skill, character, target, combat_context)
         
         if not res.get("success"):
             return {
+                "success": False,
                 "skill_name": skill.name,
                 "final_value": 0,
                 "dice_roll": 0,
@@ -789,6 +953,7 @@ class SkillProcessor:
             }
             
         return {
+            "success": True,
             "skill_name": skill.name,
             "final_value": res["final_value"],
             "dice_roll": res["dice_roll"],

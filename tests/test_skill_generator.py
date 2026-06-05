@@ -99,3 +99,79 @@ class TestSkillGenerator(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(skills[2].name, "破甲擊")
         self.assertEqual(skills[2].tier, "T4")
         self.assertEqual(skills[2].mechanics.keywords, ["Sunder"])
+
+    async def test_generate_t1_skill_with_triggers(self):
+        mock_llm = MagicMock()
+        mock_llm.call = AsyncMock(return_value='''
+        {
+            "name": "末日審判",
+            "description": "天基打擊",
+            "tier": "T1",
+            "action_type": "damage",
+            "target_type": "single",
+            "cost": {"MP": 100},
+            "formula": { "type": "multiplier", "base_stat": "INT", "dice": "2d10", "divisor": 5.0 },
+            "keywords": ["Sacrifice", "Lifesteal", "Multi-hit"],
+            "custom_logic": "造成毀滅性打擊",
+            "narrative_effect": "世界末日",
+            "executable_triggers": [
+                {
+                    "event": "on_prepare",
+                    "actions": [
+                        {
+                            "action_type": "set_flag",
+                            "param": "is_absolute_hit",
+                            "param_value": true
+                        }
+                    ]
+                }
+            ]
+        }
+        ''')
+
+        skill = await generate_single_skill(
+            description="末日審判",
+            tier="T1",
+            llm_client=mock_llm
+        )
+
+        self.assertIsNotNone(skill)
+        self.assertEqual(skill.name, "末日審判")
+        self.assertEqual(skill.tier, "T1")
+        self.assertEqual(len(skill.executable_triggers), 1)
+        self.assertEqual(skill.executable_triggers[0]["event"], "on_prepare")
+        self.assertEqual(skill.executable_triggers[0]["actions"][0]["action_type"], "set_flag")
+        self.assertEqual(skill.executable_triggers[0]["actions"][0]["param_value"], True)
+
+    async def test_generate_non_t1_skill_clears_triggers(self):
+        mock_llm = MagicMock()
+        mock_llm.call = AsyncMock(return_value='''
+        {
+            "name": "火球術",
+            "description": "發射火球",
+            "tier": "T4",
+            "action_type": "damage",
+            "target_type": "single",
+            "cost": {"MP": 15},
+            "formula": { "type": "multiplier", "base_stat": "INT", "dice": "1d10", "divisor": 12.0 },
+            "keywords": ["Burn"],
+            "custom_logic": "",
+            "narrative_effect": "",
+            "executable_triggers": [
+                {
+                    "event": "on_hit",
+                    "actions": [{"action_type": "inflict_damage"}]
+                }
+            ]
+        }
+        ''')
+
+        skill = await generate_single_skill(
+            description="火球術",
+            tier="T4",
+            llm_client=mock_llm
+        )
+
+        self.assertIsNotNone(skill)
+        self.assertEqual(skill.tier, "T4")
+        self.assertEqual(skill.executable_triggers, [])

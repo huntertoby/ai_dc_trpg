@@ -88,6 +88,10 @@ def fix_skill_structure(d):
         if "custom_logic" not in m: m["custom_logic"] = ""
         if "narrative_effect" not in m: m["narrative_effect"] = ""
         if "formula" not in m: m["formula"] = d["formula"]
+
+        # 5. 修復 executable_triggers
+        if "executable_triggers" not in d:
+            d["executable_triggers"] = []
         
     return d
 
@@ -100,6 +104,7 @@ def get_tier_rules(tier: str) -> str:
         - **關鍵字**：挑選 3 個關鍵字形成變態連段 (如 Sacrifice + Lifesteal + Multi-hit)。
         - **消耗**：極端代價。除了至少 100 MP，還必須消耗巨量 SAN (理智) 或加上自殘代價。
         - **自訂邏輯 (custom_logic)**：必須填寫！寫下一個破壞遊戲規則的機制。
+        - **傳說級觸發器 (executable_triggers)**：你必須為這個技能設計 1~2 個結構化被動觸發器，填入 `executable_triggers` 欄位（見下方說明）。
         """
     elif tier == "T2":
         return """
@@ -139,6 +144,82 @@ async def generate_single_skill(description: str, tier: str, llm_client) -> Opti
     tier_rules = get_tier_rules(tier)
     conflict_instructions = "嚴禁同時挑選互斥的關鍵字組，包括：\n" + "\n".join([f"- {msg}" for _, msg in CONFLICTING_GROUPS])
     
+    triggers_guide = ""
+    triggers_json_example = "[]"
+    if tier == "T1":
+        triggers_guide = """
+    **【傳說技能被動觸發器規範 (僅限 T1)】**
+    當階級為 `T1` 時，你**必須**在 `executable_triggers` 欄位提供該技能附帶的被動觸發器 JSON 列表（當角色學會此技能時在戰鬥中自動生效）。
+    結構規範如下：
+    - `event` (觸發事件名，必須是下列之一)：
+      - `'on_prepare'` (命中判定前，用於修改命中、爆擊等 flags)
+      - `'on_dice'` (擲骰計算前，用於修改點數或補底)
+      - `'on_calculate_damage'` (傷害減免計算前，用於修改無視防禦比例或傷害加倍)
+      - `'on_hit'` (擊中目標後，在此時目標血量已被扣減)
+      - `'on_damaged'` (受到任何傷害後，自身或目標)
+      - `'on_kill'` (擊殺目標後)
+      - `'on_health_below'` (自身血量低於指定百分比後，必須附帶 `health_threshold`)
+      - `'on_health_up'` (自身或目標獲得治療後)
+      - `'on_turn_start'` (回合開始時)
+      - `'on_turn_end'` (回合結束時)
+    - 條件過濾器 (選擇性填寫)：
+      - `health_threshold` (浮點數，僅當 event 為 'on_health_below' 時): 觸發血量百分比門檻 (如 30.0 代表 30%)
+      - `target_health_below` (浮點數): 擊中時目標血量百分比必須小於或等於此值才觸發 (如 30.0)
+      - `target_health_above` (浮點數): 擊中時目標血量百分比必須大於或等於此值才觸發 (如 70.0)
+    - `actions` (觸發行為列表，每個對象包含)：
+      - `action_type` (必須是下列之一)：
+        - `'inflict_damage'`: 造成額外傷害 (可設定 `flat_value`, `scaling_stat` 如 "STR" 或 "MAX_HP", `value_multiplier` 如 3.5, `damage_type` 通常為 "true_damage")
+        - `'gain_shield'`: 獲得臨時護盾 (可設定 `flat_value`, `scaling_stat`, `value_multiplier`，會增加 temp_hp 並賦予 Shield 狀態)
+        - `'heal'`: 恢復生命/法力/理智 (可設定 `flat_value`, `scaling_stat`, `value_multiplier`, `target_resource` 為 "hp"/"mp"/"sanity")
+        - `'apply_status'`: 施加狀態。必須設定 `status_name`。如果施加的是系統內建狀態（如 'Burn', 'Stun', 'Slow' 等），可直接填入；如果是自定義狀態（如『魔神烙印』），請將 `status_name` 設為自定義名稱，並在本 Action 對象內提供額外的 `executable_triggers` 列表，用於定義該自定義狀態在目標身上生效時的被動觸發器（例如在 `on_calculate_damage` 時將 `damage_multiplier` 設為 1.15，並在 `on_damaged` 時執行 `remove_status` 移除自身，以實現單次傷害增幅）。
+        - `'remove_status'`: 清除狀態 (必須設定 `status_name`)
+        - `'call_special_mechanic'`: 特殊機制 (必須設定 `keyword_name` 為 'Time_Warp')
+        - `'set_flag'`: 攔截器標記 (僅適用於 on_prepare/on_dice/on_calculate_damage，`param` 為 "is_absolute_hit"/"is_crit"，`param_value` 為 true/false)
+        - `'set_value'`: 攔截器數值 (僅適用於 on_prepare/on_calculate_damage，`param` 為 "defense_ignore_ratio"/"damage_multiplier"，`param_value` 為浮點數如 0.5)
+        - `'modify_dice'`: 攔截器骰子修正 (僅適用於 on_dice，`param` 為 "floor_value"/"roll_modifier"，`param_value` 為整數如 15)
+      - `target` (作用目標，必須是下列之一)：
+        - `'caster'` (裝備/狀態持有者)
+        - `'target'` (攻擊對象，或攻擊自身者)
+        - `'random_enemy'` (隨機單一敵人)
+      - `chance` (浮點數，觸發機率，0.0 到 1.0，預設 1.0)
+        """
+        triggers_json_example = """[
+            {
+                "event": "on_hit",
+                "actions": [
+                    {
+                        "action_type": "apply_status",
+                        "target": "target",
+                        "status_name": "魔神烙印",
+                        "duration": 2,
+                        "chance": 0.3,
+                        "executable_triggers": [
+                            {
+                                "event": "on_calculate_damage",
+                                "actions": [
+                                    {
+                                        "action_type": "set_value",
+                                        "param": "damage_multiplier",
+                                        "param_value": 1.15
+                                    }
+                                ]
+                            },
+                            {
+                                "event": "on_damaged",
+                                "actions": [
+                                    {
+                                        "action_type": "remove_status",
+                                        "target": "caster",
+                                        "status_name": "魔神烙印"
+                                    }
+                                ]
+                            }
+                        ]
+                    }
+                ]
+            }
+        ]"""
+
     system_prompt = f"""
     你是一個專業的 TRPG 技能設計師。請根據玩家的描述，設計 **1 個** 技能。
     
@@ -152,6 +233,7 @@ async def generate_single_skill(description: str, tier: str, llm_client) -> Opti
     1. **行為類型 (Action Type)**：標註 `damage`, `heal`, `buff`, `debuff`。
     2. **目標類型 (Target Type)**：`single`, `aoe`, `self`, `allies`。
     3. **敘事特效 (Narrative Effect)**：一段帥氣的劇情效果。
+    {triggers_guide}
 
     **【合法關鍵字】**: {", ".join(SKILL_KEYWORDS)}
 
@@ -167,7 +249,8 @@ async def generate_single_skill(description: str, tier: str, llm_client) -> Opti
         "formula": {{ "type": "multiplier", "base_stat": "STR", "dice": "1d20", "divisor": 12.0 }},
         "keywords": [],
         "custom_logic": "",
-        "narrative_effect": "一段特效描述..."
+        "narrative_effect": "一段特效描述...",
+        "executable_triggers": {triggers_json_example}
     }}
     """
 
@@ -296,4 +379,3 @@ async def generate_starter_skills(char_data: Dict, llm_client) -> List[Skill]:
 
 async def generate_single_skill_test(description: str, tier: str, llm_client) -> Optional[Skill]:
     return await generate_single_skill(description, tier, llm_client)
-

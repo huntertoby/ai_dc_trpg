@@ -19,6 +19,7 @@ class Equipment(Item):
     is_two_handed: bool = False                      # 是否為雙手武器
     special_effect: str = ""                         # 特殊描述/技能預留位
     bonuses: Dict[str, float] = Field(default_factory=dict)
+    executable_triggers: List[Dict[str, Any]] = Field(default_factory=list)
     
     # --- 戰鬥系統擴充 ---
     weapon_type: Optional[str] = None                # 'sword', 'bow', 'staff', 'dagger', etc.
@@ -33,6 +34,11 @@ class StatusEffect(BaseModel):
     duration: int = 0                                 # 剩餘數值
     start_date: Optional[str] = None                  # 針對天數制：開始日期 (YYYY-MM-DD)
     bonuses: Dict[str, float] = Field(default_factory=dict)
+    executable_triggers: List[Dict[str, Any]] = Field(default_factory=list)
+    stacks: int = 1                                   # 新增：當前層數
+    max_stacks: int = 5                               # 新增：最大堆疊上限
+    trigger_limit: int = 0                            # 新增：最大觸發次數 (0 代表無限制)
+    trigger_count: int = 0                            # 新增：已觸發次數
 
 class BuildingSchema(BaseModel):
     id: str
@@ -171,6 +177,7 @@ class Skill(BaseModel):
     description: str
     tier: Literal["T1", "T2", "T3", "T4", "T5"] = "T5" # 技能階級 (T5 為最基礎)
     mechanics: SkillMechanics
+    executable_triggers: List[Dict[str, Any]] = Field(default_factory=list)
 
 class LogEntry(BaseModel):
     date: str                  # YYYY-MM-DD
@@ -192,18 +199,18 @@ class CharacterSchema(BaseModel):
     equipment_slots: EquipmentSlots = Field(default_factory=EquipmentSlots)
     bonus_points_spent: int = 0
     stat_points: int = 5      # 新增：可用屬性點，初始為 5 點
-    abilities: List[Skill] = []
+    abilities: List[Skill] = Field(default_factory=list)
     personality: Personality = Field(default_factory=Personality)
     vitality: Vitality = Field(default_factory=Vitality)
-    inventory: List[Union[Equipment, Item]] = []
-    status_effects: List[StatusEffect] = []
+    inventory: List[Union[Equipment, Item]] = Field(default_factory=list)
+    status_effects: List[StatusEffect] = Field(default_factory=list)
     location: List[int] = Field(default_factory=lambda: [0, 0]) # 新增：當前座標 [x, y]
     last_regen: float = 0.0                                     # 新增：上次體力恢復時間戳記
     max_inventory_slots: int = 20                               # 新增：背包格數上限，初始 20
     rank: str = "E"                                             # 新增：冒險者階級 (E, D, C, B, A, S)
     reputation: int = 0                                         # 新增：名聲值
-    active_quests: List[QuestSchema] = []                        # 新增：進行中的任務
-    known_rumors: List[str] = []                                # 新增：已獲取的情報/傳聞
+    active_quests: List[QuestSchema] = Field(default_factory=list)                        # 新增：進行中的任務
+    known_rumors: List[str] = Field(default_factory=list)
     last_daily_reset_date: Optional[str] = None                 # 新增：上次每日重置日期 (YYYY-MM-DD)
     last_free_rest_date: Optional[str] = None                   # 新增：上次免費休息日期 (YYYY-MM-DD)
     last_paid_rest_date: Optional[str] = None                   # 新增：上次付費休息日期 (YYYY-MM-DD)

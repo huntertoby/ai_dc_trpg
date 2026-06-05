@@ -106,3 +106,43 @@ STAT_TRANSLATIONS = {
     "WIS": "感知",
     "CHA": "魅力"
 }
+
+# 裝備主題分類關鍵字，用於 Stage 1 LLM 生成池導引
+EQUIPMENT_KEYWORDS = {
+    "fire": {
+        "events": ["on_hit", "on_damaged", "on_crit"],
+        "actions": ["inflict_damage", "apply_debuff"],
+        "statuses": ["Burn"],
+        "description": "與火焰、灼燒、爆裂相關的主題"
+    },
+    "ice": {
+        "events": ["on_hit", "on_damaged", "on_miss", "on_dodge"],
+        "actions": ["apply_debuff", "gain_shield"],
+        "statuses": ["Slow", "Frostbite"],
+        "description": "與冰霜、減速、凍傷、護盾相關的主題"
+    },
+    "holy": {
+        "events": ["on_battle_start", "on_turn_start", "on_health_below", "on_fatal_damage"],
+        "actions": ["heal", "gain_shield", "purge_debuffs", "call_special"],
+        "statuses": ["Bless", "Shield", "Immune"],
+        "description": "與神聖、治療、淨化、免死、祝福相關的主題"
+    },
+    "shadow": {
+        "events": ["on_hit", "on_crit", "on_kill", "on_dodge"],
+        "actions": ["inflict_damage", "apply_debuff", "remove_status"],
+        "statuses": ["Blind", "Doom", "Slow"],
+        "description": "與暗影、詛咒、盲目、處決、即死相關的主題"
+    },
+    "lightning": {
+        "events": ["on_hit", "on_crit", "on_dodge"],
+        "actions": ["inflict_damage", "apply_debuff", "set_value"],
+        "statuses": ["Stun", "Slow"],
+        "description": "與雷電、眩暈、高額爆擊、無視防禦相關的主題"
+    },
+    "wind": {
+        "events": ["on_turn_start", "on_dodge", "on_miss"],
+        "actions": ["gain_shield", "apply_status", "modify_dice"],
+        "statuses": ["Invis", "Slow"],
+        "description": "與疾風、迴避、隱身、行動點骰子修正相關的主題"
+    }
+}

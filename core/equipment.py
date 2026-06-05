@@ -46,13 +46,19 @@ class EquipmentBalancer:
         """
         budgets = cls.calculate_budgets(equipment.item_level, equipment.tier)
         
-        # 0. 移除負數或零
-        equipment.bonuses = {k: v for k, v in equipment.bonuses.items() if v > 0}
+        # 0. 移除負數或零，並過濾掉非法屬性
+        primary_list = ["STR", "DEX", "CON", "INT", "WIS", "CHA"]
+        allowed_subs = ["crit_rate", "evasion_rate", "accuracy", "skill_power", "tenacity", "luck"]
+        
+        # 只保留合法的 bonuses，排除非法自創鍵
+        equipment.bonuses = {
+            k: v for k, v in equipment.bonuses.items() 
+            if v > 0 and (k in primary_list or k in allowed_subs)
+        }
         
         # 分類屬性
-        primary_list = ["STR", "DEX", "CON", "INT", "WIS", "CHA"]
         proposed_primary = {k: v for k, v in equipment.bonuses.items() if k in primary_list}
-        proposed_sub = {k: v for k, v in equipment.bonuses.items() if k not in primary_list}
+        proposed_sub = {k: v for k, v in equipment.bonuses.items() if k in allowed_subs}
 
         # 1. 處理主屬性 (Primary)
         if not proposed_primary:
@@ -127,9 +133,10 @@ class EquipmentBalancer:
 
         equipment.bonuses = {k: v for k, v in final_bonuses.items() if v > 0}
         
-        # 4. 特殊效果過濾：僅 T1 (傳說) 允許擁有特殊效果描述
+        # 4. 特殊效果過濾：僅 T1 (傳說) 允許擁有特殊效果描述與觸發器
         if equipment.tier != "T1":
             equipment.special_effect = ""
+            equipment.executable_triggers = []
             
         return equipment
 
