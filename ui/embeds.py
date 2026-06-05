@@ -88,9 +88,24 @@ def build_equipment_embed(character: Character, user: discord.Member) -> discord
 
     def format_equipment_list(eq_group):
         lines = []
+        stat_names = {
+            "STR": "力量", "DEX": "敏捷", "CON": "體質", "INT": "智力", "WIS": "感知", "CHA": "魅力",
+            "crit_rate": "爆擊", "evasion_rate": "閃避", "accuracy": "命中", "skill_power": "技威",
+            "tenacity": "韌性", "luck": "幸運", "ATK": "攻擊", "p_def": "物防", "m_def": "魔防"
+        }
         for k, v in eq_group.items():
             if v:
-                lines.append(f"**{k}**: [{v.tier}] {v.name}")
+                bonus_strs = []
+                for stat_key, val in v.bonuses.items():
+                    name = stat_names.get(stat_key, stat_key)
+                    if any(x in stat_key for x in ["rate", "accuracy", "skill_power"]):
+                        bonus_strs.append(f"{name}+{val*100:.0f}%")
+                    else:
+                        bonus_strs.append(f"{name}+{int(val) if val == int(val) else val}")
+                
+                stats_part = f" `({', '.join(bonus_strs)})`" if bonus_strs else ""
+                effect_part = f"\n  └ 🔮 *{v.special_effect}*" if getattr(v, "special_effect", None) and v.special_effect else ""
+                lines.append(f"**{k}**: [{v.tier}] {v.name}{stats_part}{effect_part}")
             else:
                 lines.append(f"**{k}**: ---")
         return "\n".join(lines)

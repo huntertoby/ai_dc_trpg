@@ -116,3 +116,66 @@ class TestSkillProcessor(unittest.TestCase):
         
         with self.assertRaises(ValueError):
             SkillProcessor.execute_skill(skill, char)
+
+    def test_execute_skill_detailed_math_breakdown(self):
+        # Test damage skill log breakdown
+        skill_dmg = Skill(
+            name="火球術", description="召喚大火球", tier="T5",
+            mechanics=SkillMechanics(
+                action_type="damage", target_type="single", cost={"MP": 5},
+                formula=SkillFormula(type="multiplier", base_stat="INT", dice="1d20", divisor=10.0)
+            )
+        )
+        
+        char = MagicMock()
+        char.data = CharacterSchema(
+            character_id="test_char_123", name="卡爾", background="孤兒",
+            primary_stats=PrimaryAttributes(STR=5, DEX=5, CON=5, INT=15, WIS=5, CHA=5),
+            vitality=Vitality(hp=100, max_hp=100, mp=20, max_mp=20, stamina=100, max_stamina=100, sanity=100, max_sanity=100),
+            inventory=[], status_effects=[], equipment_slots=EquipmentSlots()
+        )
+        char.total_stats = {"INT": 15}
+        
+        target = MagicMock()
+        target.data = CharacterSchema(
+            character_id="test_target_456", name="木人樁", background="無",
+            primary_stats=PrimaryAttributes(STR=5, DEX=5, CON=5, INT=5, WIS=5, CHA=5),
+            vitality=Vitality(hp=100, max_hp=100, mp=20, max_mp=20, stamina=100, max_stamina=100, sanity=100, max_sanity=100),
+            inventory=[], status_effects=[], equipment_slots=EquipmentSlots()
+        )
+        target.combat_stats = {"p_def": 5, "m_def": 5, "crit_rate": 0.05, "evasion_rate": 0.0, "accuracy": 0.95, "skill_power": 1.0}
+        
+        with patch("core.skill_processor.SkillProcessor.roll_dice", return_value=10), \
+             patch("random.random", return_value=0.5):
+            res = SkillProcessor.execute_skill(skill_dmg, char, target)
+            self.assertTrue(res["success"])
+            
+            # Find the log containing the math breakdown
+            breakdown_log = [l for l in res["logs"] if "🎲 **判定**:" in l]
+            self.assertEqual(len(breakdown_log), 1)
+            log_text = breakdown_log[0]
+            self.assertIn("10 (公式: 1d20)", log_text)
+            self.assertIn("威力: (智力:15 * (10/10.0))", log_text)
+            self.assertIn("防禦: -3.0 (目標 魔法防禦 5，有效減免: 3.0，上限 80%)", log_text)
+
+        # Test healing skill log breakdown
+        skill_heal = Skill(
+            name="治療術", description="恢復生命值", tier="T5",
+            mechanics=SkillMechanics(
+                action_type="heal", target_type="single", cost={"MP": 5},
+                formula=SkillFormula(type="multiplier", base_stat="WIS", dice="1d20", divisor=10.0)
+            )
+        )
+        char.total_stats = {"WIS": 15}
+        
+        with patch("core.skill_processor.SkillProcessor.roll_dice", return_value=10), \
+             patch("random.random", return_value=0.5):
+            res_heal = SkillProcessor.execute_skill(skill_heal, char, target)
+            self.assertTrue(res_heal["success"])
+            
+            # Find the log containing the math breakdown
+            breakdown_log_heal = [l for l in res_heal["logs"] if "🎲 **判定**:" in l]
+            self.assertEqual(len(breakdown_log_heal), 1)
+            log_text_heal = breakdown_log_heal[0]
+            self.assertIn("10 (公式: 1d20)", log_text_heal)
+            self.assertIn("治療量: (感知:15 * (10/10.0)) = 15.0", log_text_heal)

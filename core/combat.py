@@ -717,7 +717,7 @@ class CombatManager:
         self._check_battle_status()
         
         # 組合訊息
-        skill_logs = "\n * " + "\n * ".join(logs) if logs else ""
+        skill_logs = "\n" + "\n".join(logs) if logs else ""
         msg = f"🌟 {self.character.data.name} 施展了技能【{skill.name}】！{skill_logs}"
         
         # 如果是瞬發，本回合不切換，直接回傳

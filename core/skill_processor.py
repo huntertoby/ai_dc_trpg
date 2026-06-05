@@ -3,6 +3,7 @@ import random
 import re
 from typing import Dict, Any, Tuple, Optional
 from core.models import Skill, CharacterSchema
+from core.constants import STAT_TRANSLATIONS
 
 def is_mock(obj) -> bool:
     return obj.__class__.__name__ in ('Mock', 'MagicMock', 'NonCallableMock')
@@ -298,14 +299,14 @@ class SkillExecutionPipeline:
             "CHA": get_entity_stat(caster, "CHA")
         }
         base_val, dice_roll = SkillProcessor.calculate_base_value(skill, stats_dict)
+        formula = skill.mechanics.formula
+        stat_val = stats_dict.get(formula.base_stat, 5)
         
         # 祝福 (Bless) 骰子補底：小於 5 補底為 10
         if cls._has_status(caster, "Bless") and dice_roll <= 5:
             dice_roll = 10
             logs.append("🌟 觸發【祝福】補底：擲骰點數小於 5，自動補底提升至 10！")
             # 重新計算 base_val
-            formula = skill.mechanics.formula
-            stat_val = stats_dict.get(formula.base_stat, 5)
             if formula.type == "multiplier":
                 multiplier = dice_roll / formula.divisor
                 base_val = stat_val * multiplier
@@ -351,6 +352,7 @@ class SkillExecutionPipeline:
         # ---------------------------------------------------------
         defense_stat = "p_def" if skill.mechanics.action_type == "damage" else "m_def"
         target_def = get_entity_combat_stat(target, defense_stat, 0)
+        original_target_def = target_def
         
         # Pierce (穿透)：目標防禦力減半計算
         if "Pierce" in keywords:
@@ -358,6 +360,7 @@ class SkillExecutionPipeline:
             logs.append("🎯 觸發【穿透】：目標防禦力減半計算。")
             
         final_value = base_val
+        effective_def = 0
         if action_type == "damage":
             # 限制防禦力最多只能抵擋 80% 威力
             max_mitigation = base_val * 0.80
@@ -435,7 +438,47 @@ class SkillExecutionPipeline:
                 if dmg_to_apply > 0:
                     curr_hp = get_entity_attr(target, "hp", 100)
                     set_entity_attr(target, "hp", max(0, curr_hp - dmg_to_apply))
-                    logs.append(f"💥 對 {cls._get_name(target)} 造成了 {dmg_to_apply} 點真實傷害！")
+                    
+                    stat_name = STAT_TRANSLATIONS.get(formula.base_stat, formula.base_stat)
+                    if formula.type == "multiplier":
+                        calc_formula_str = f"{stat_name}:{stat_val} * ({dice_roll}/{formula.divisor})"
+                    else:
+                        calc_formula_str = f"{dice_roll} + {stat_name}:{stat_val}"
+                        
+                    if skill_power != 1.0:
+                        calc_formula_str = f"({calc_formula_str}) * 威力:{skill_power:.1f}"
+                        
+                    extra_mults = []
+                    if "Stat_Swap" in keywords: extra_mults.append("屬反:1.3x")
+                    if "Mimicry" in keywords: extra_mults.append("擬態:1.2x")
+                    if "Gamble" in keywords and 'gamble_roll' in locals() and gamble_roll == 1: 
+                        extra_mults.append("豪賭:3.0x")
+                    if "overload_active" in control_flags: extra_mults.append("超載:1.5x")
+                    if "martyr_active" in control_flags: extra_mults.append("殉道:3.0x")
+                    
+                    if extra_mults:
+                        calc_formula_str = f"({calc_formula_str}) * {' * '.join(extra_mults)}"
+                        
+                    if "sacrifice_bonus" in control_flags:
+                        calc_formula_str = f"({calc_formula_str}) + 犧牲威力:{control_flags['sacrifice_bonus']:.1f}"
+                        
+                    defense_type_name = "物理防禦" if defense_stat == "p_def" else "魔法防禦"
+                    pierce_suffix = " (穿透減半)" if "Pierce" in keywords else ""
+                    def_str = f"{original_target_def}{pierce_suffix}"
+                    
+                    execute_mult = ""
+                    if "Execute" in keywords:
+                        target_hp = get_entity_attr(target, "hp", 100)
+                        target_max_hp = get_entity_attr(target, "max_hp", 100)
+                        if target_hp / target_max_hp < 0.20:
+                            execute_mult = " * 🎯處決:3.0x"
+                            
+                    calc_info = (
+                        f"\n 🎲 **判定**: {dice_roll} (公式: {formula.dice})"
+                        f"\n 📊 **威力**: ({calc_formula_str}){execute_mult} = {final_value:.1f}"
+                        f"\n 🛡️ **防禦**: -{effective_def:.1f} (目標 {defense_type_name} {def_str}，有效減免: {effective_def:.1f}，上限 80%)"
+                    )
+                    logs.append(f"💥 對 {cls._get_name(target)} 造成了 {dmg_to_apply} 點真實傷害！" + calc_info)
                 
                 # Lifesteal (吸血)：實際造成傷害的 30% 進行回復 (update_vitality)
                 if "Lifesteal" in keywords:
@@ -464,7 +507,21 @@ class SkillExecutionPipeline:
                 target.update_vitality(hp=curr_hp + int(final_value))
             else:
                 set_entity_attr(target, "hp", min(max_hp, curr_hp + int(final_value)))
-            logs.append(f"💚 為 {cls._get_name(target)} 恢復了 {final_value} 點生命值！")
+                
+            stat_name = STAT_TRANSLATIONS.get(formula.base_stat, formula.base_stat)
+            if formula.type == "multiplier":
+                calc_formula_str = f"{stat_name}:{stat_val} * ({dice_roll}/{formula.divisor})"
+            else:
+                calc_formula_str = f"{dice_roll} + {stat_name}:{stat_val}"
+                
+            if skill_power != 1.0:
+                calc_formula_str = f"({calc_formula_str}) * 威力:{skill_power:.1f}"
+                
+            calc_info = (
+                f"\n 🎲 **判定**: {dice_roll} (公式: {formula.dice})"
+                f"\n 📊 **治療量**: ({calc_formula_str}) = {final_value:.1f}"
+            )
+            logs.append(f"💚 為 {cls._get_name(target)} 恢復了 {final_value} 點生命值！" + calc_info)
 
         # ---------------------------------------------------------
         # Phase 6: Status Application (狀態附加)
