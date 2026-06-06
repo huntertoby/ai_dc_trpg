@@ -105,6 +105,9 @@ class TriggerCompiler:
             # 3. 讀取 Trigger 級別屬性
             cooldown = trigger_raw.get("cooldown")
             chance = trigger_raw.get("chance")
+            dice_roll_str = trigger_raw.get("dice_roll")
+            if dice_roll_str:
+                dice_roll_str = str(dice_roll_str).strip()
             
             health_threshold = trigger_raw.get("health_threshold")
             if health_threshold is not None:
@@ -170,6 +173,7 @@ class TriggerCompiler:
                 if health_threshold is not None: trigger_b["health_threshold"] = float(health_threshold)
                 if target_health_below is not None: trigger_b["target_health_below"] = float(target_health_below)
                 if target_health_above is not None: trigger_b["target_health_above"] = float(target_health_above)
+                if dice_roll_str: trigger_b["dice_roll"] = dice_roll_str
 
                 compiled_triggers.append(trigger_a)
                 compiled_triggers.append(trigger_b)
@@ -181,6 +185,7 @@ class TriggerCompiler:
                 if cooldown is not None: t["cooldown"] = int(cooldown)
                 if chance is not None: t["chance"] = float(chance)
                 if condition_str: t["condition"] = condition_str
+                if dice_roll_str: t["dice_roll"] = dice_roll_str
                 compiled_triggers.append(t)
 
             # 情境三：只有普通戰鬥行為
@@ -193,6 +198,7 @@ class TriggerCompiler:
                 if health_threshold is not None: t["health_threshold"] = float(health_threshold)
                 if target_health_below is not None: t["target_health_below"] = float(target_health_below)
                 if target_health_above is not None: t["target_health_above"] = float(target_health_above)
+                if dice_roll_str: t["dice_roll"] = dice_roll_str
                 compiled_triggers.append(t)
 
         return compiled_triggers
@@ -207,6 +213,7 @@ class TriggerCompiler:
             return []
 
         action_type = action_type.strip()
+        compiled = []
 
         # 1. 轉譯 debuff
         if action_type == "apply_debuff":
@@ -215,20 +222,37 @@ class TriggerCompiler:
         # 2. 轉譯複合行為：purge_debuffs (由引擎直接支援)
         if action_type == "purge_debuffs":
             target = act.get("target", "caster")
-            return [
+            compiled = [
                 {"action_type": "purge_debuffs", "target": target}
             ]
 
         # 3. 展開複合行為：apply_shield
-        if action_type == "apply_shield":
+        elif action_type == "apply_shield":
             shield_name = act.get("shield_name", "Shield")
             duration = cls._to_int(act.get("duration"), 3)
             target = act.get("target", "caster")
             
-            # 獲取護盾係數
-            con_mult = cls._to_float(act.get("con_multiplier"), 1.0)
+            flat = cls._to_float(act.get("flat_value"), 0.0)
+            stat = cls._clean_stat(act.get("scaling_stat"))
+            dice = act.get("dice")
+            if dice:
+                dice = str(dice).strip()
+            divisor = cls._to_float(act.get("divisor"), 1.0)
             
-            return [
+            con_mult = act.get("con_multiplier")
+            if stat is None and con_mult is not None:
+                stat = "CON"
+                mult = cls._to_float(con_mult, 1.0)
+            else:
+                if stat is None and flat == 0.0 and not dice:
+                    stat = "CON"
+                raw_mult = act.get("value_multiplier") or act.get("multiplier") or con_mult
+                if raw_mult is not None:
+                    mult = cls._to_float(raw_mult, 0.0)
+                else:
+                    mult = 1.0 if stat else 0.0
+            
+            compiled = [
                 {
                     "action_type": "apply_status",
                     "status_name": shield_name,
@@ -237,73 +261,104 @@ class TriggerCompiler:
                 },
                 {
                     "action_type": "gain_shield",
-                    "flat_value": 0.0,
-                    "scaling_stat": "CON",
-                    "value_multiplier": con_mult,
+                    "flat_value": flat,
+                    "scaling_stat": stat,
+                    "value_multiplier": mult,
+                    "dice": dice,
+                    "divisor": divisor,
                     "target": target
                 }
             ]
 
         # 4. 欄位對應轉換與參數清洗
         # A. inflict_damage
-        if action_type == "inflict_damage":
+        elif action_type == "inflict_damage":
             target = act.get("target", "target")
             flat = cls._to_float(act.get("flat_value"), 0.0)
             stat = cls._clean_stat(act.get("scaling_stat"))
-            mult = cls._to_float(act.get("value_multiplier") or act.get("multiplier"), 0.0)
+            raw_mult = act.get("value_multiplier") or act.get("multiplier")
+            if raw_mult is not None:
+                mult = cls._to_float(raw_mult, 0.0)
+            else:
+                mult = 1.0 if stat else 0.0
+            dice = act.get("dice")
+            if dice:
+                dice = str(dice).strip()
+            divisor = cls._to_float(act.get("divisor"), 1.0)
             
-            return [{
+            compiled = [{
                 "action_type": "inflict_damage",
                 "target": target,
                 "flat_value": flat,
                 "scaling_stat": stat,
                 "value_multiplier": mult,
-                "damage_type": "true_damage" # 引擎直接扣 HP 本質為 true_damage
+                "dice": dice,
+                "divisor": divisor,
+                "damage_type": "true_damage"
             }]
 
         # B. gain_shield
-        if action_type == "gain_shield":
+        elif action_type == "gain_shield":
             target = act.get("target", "caster")
             flat = cls._to_float(act.get("flat_value"), 0.0)
             stat = cls._clean_stat(act.get("scaling_stat"))
-            mult = cls._to_float(act.get("value_multiplier") or act.get("multiplier"), 0.0)
+            raw_mult = act.get("value_multiplier") or act.get("multiplier")
+            if raw_mult is not None:
+                mult = cls._to_float(raw_mult, 0.0)
+            else:
+                mult = 1.0 if stat else 0.0
+            dice = act.get("dice")
+            if dice:
+                dice = str(dice).strip()
+            divisor = cls._to_float(act.get("divisor"), 1.0)
 
-            return [{
+            compiled = [{
                 "action_type": "gain_shield",
                 "target": target,
                 "flat_value": flat,
                 "scaling_stat": stat,
-                "value_multiplier": mult
+                "value_multiplier": mult,
+                "dice": dice,
+                "divisor": divisor
             }]
 
         # C. heal
-        if action_type == "heal":
+        elif action_type == "heal":
             target = act.get("target", "caster")
             flat = cls._to_float(act.get("flat_value"), 0.0)
             stat = cls._clean_stat(act.get("scaling_stat"))
-            mult = cls._to_float(act.get("value_multiplier") or act.get("multiplier"), 0.0)
+            raw_mult = act.get("value_multiplier") or act.get("multiplier")
+            if raw_mult is not None:
+                mult = cls._to_float(raw_mult, 0.0)
+            else:
+                mult = 1.0 if stat else 0.0
             res = act.get("target_resource", "hp")
             if res not in ("hp", "mp", "sanity"):
                 res = "hp"
+            dice = act.get("dice")
+            if dice:
+                dice = str(dice).strip()
+            divisor = cls._to_float(act.get("divisor"), 1.0)
 
-            return [{
+            compiled = [{
                 "action_type": "heal",
                 "target": target,
                 "flat_value": flat,
                 "scaling_stat": stat,
                 "value_multiplier": mult,
-                "target_resource": res
+                "target_resource": res,
+                "dice": dice,
+                "divisor": divisor
             }]
 
         # D. apply_status
-        if action_type == "apply_status":
+        elif action_type == "apply_status":
             target = act.get("target", "caster" if act.get("action_type") == "apply_status" else "target")
             status_name = act.get("status_name") or act.get("debuff_name")
             if not status_name:
                 return []
             duration = cls._to_int(act.get("duration"), 1)
             
-            # 清理 bonuses
             bonuses = {}
             bonuses_raw = act.get("bonuses") or act.get("stat_bonuses")
             if isinstance(bonuses_raw, dict):
@@ -312,7 +367,7 @@ class TriggerCompiler:
                     if clean_k:
                         bonuses[clean_k] = cls._to_float(v, 0.0)
 
-            return [{
+            compiled = [{
                 "action_type": "apply_status",
                 "target": target,
                 "status_name": status_name,
@@ -321,53 +376,63 @@ class TriggerCompiler:
             }]
 
         # E. remove_status
-        if action_type == "remove_status":
+        elif action_type == "remove_status":
             target = act.get("target", "caster")
             status_name = act.get("status_name")
             if not status_name:
                 return []
-            return [{
+            compiled = [{
                 "action_type": "remove_status",
                 "target": target,
                 "status_name": status_name
             }]
 
         # F. call_special_mechanic / call_special
-        if action_type in ("call_special_mechanic", "call_special"):
+        elif action_type in ("call_special_mechanic", "call_special"):
             kw = act.get("keyword_name")
             if kw not in ("Time_Warp", "Prevent_Death"):
                 return []
-            return [{
+            compiled = [{
                 "action_type": "call_special_mechanic",
-                "target": "caster", # 免死與時光回溯強制套用在 caster 身上
+                "target": "caster",
                 "keyword_name": kw
             }]
 
         # G. modify_dice
-        if action_type == "modify_dice":
+        elif action_type == "modify_dice":
             param = act.get("param")
             if param not in ("floor_value", "roll_modifier"):
                 return []
             val = cls._to_int(act.get("param_value"), 0)
-            return [{
+            compiled = [{
                 "action_type": "modify_dice",
                 "param": param,
                 "param_value": val
             }]
 
         # H. set_value
-        if action_type == "set_value":
+        elif action_type == "set_value":
             param = act.get("param")
             if param not in ("damage_multiplier", "defense_ignore_ratio"):
                 return []
             val = cls._to_float(act.get("param_value"), 1.0)
-            return [{
+            compiled = [{
                 "action_type": "set_value",
                 "param": param,
                 "param_value": val
             }]
 
-        return []
+        # Append dice_range if present
+        dice_range = act.get("dice_range")
+        if isinstance(dice_range, list) and len(dice_range) == 2:
+            try:
+                dice_range = [int(dice_range[0]), int(dice_range[1])]
+                for item in compiled:
+                    item["dice_range"] = dice_range
+            except (ValueError, TypeError):
+                pass
+
+        return compiled
 
     # --- 輔助清洗工具方法 ---
     @classmethod

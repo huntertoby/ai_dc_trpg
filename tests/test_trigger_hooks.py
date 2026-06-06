@@ -22,7 +22,7 @@ class TestTriggerHooks(unittest.IsolatedAsyncioTestCase):
         self.char.max_hp = 100
         self.char.combat_stats = {
             "p_def": 10, "m_def": 10, "crit_rate": 0.0, "evasion_rate": 0.0,
-            "accuracy": 0.95, "skill_power": 1.0, "tenacity": 100, "luck": 1
+            "accuracy": 1.0, "skill_power": 1.0, "tenacity": 100, "luck": 1
         }
         
         # Mock save and update_vitality methods

@@ -85,7 +85,7 @@ class TestSkillPipelineAndGenerator(unittest.TestCase):
         )
         caster.total_stats = {"STR": 20}
         caster.max_hp = 100
-        caster.combat_stats = {"accuracy": 1.0, "skill_power": 1.0, "p_def": 10, "m_def": 10}
+        caster.combat_stats = {"accuracy": 1.0, "skill_power": 1.0, "p_def": 10, "m_def": 10, "crit_rate": 0.0}
         
         target = {
             "name": "怪物",
@@ -142,7 +142,7 @@ class TestSkillPipelineAndGenerator(unittest.TestCase):
             inventory=[], status_effects=[], equipment_slots=EquipmentSlots()
         )
         caster.total_stats = {"WIS": 20}
-        caster.combat_stats = {"accuracy": 1.0, "skill_power": 1.0}
+        caster.combat_stats = {"accuracy": 1.0, "skill_power": 1.0, "crit_rate": 0.0}
         
         target = {
             "name": "怪物",
@@ -178,7 +178,7 @@ class TestSkillPipelineAndGenerator(unittest.TestCase):
             inventory=[], status_effects=[], equipment_slots=EquipmentSlots()
         )
         caster.total_stats = {"DEX": 20}
-        caster.combat_stats = {"accuracy": 1.0, "skill_power": 1.0}
+        caster.combat_stats = {"accuracy": 1.0, "skill_power": 1.0, "crit_rate": 0.0}
         
         target = {
             "name": "防禦怪",

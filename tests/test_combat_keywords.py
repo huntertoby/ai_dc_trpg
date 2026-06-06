@@ -370,21 +370,21 @@ class TestCombatKeywords(unittest.IsolatedAsyncioTestCase):
             self.assertTrue(res["success"])
             self.assertEqual(len(cm.delayed_actions), 1) # 殘響已加入延遲佇列
             
-        # 下一回合輪到怪物，隨後切回玩家回合開始
-        # 我們直接模擬 next_turn 回到玩家回合
-        cm.current_turn_idx = 1
-        cm.next_turn() # 會切換到玩家，並自動觸發殘響 tick！
-        
-        # 驗證殘響已執行，且 delayed_actions 佇列被排空
-        self.assertEqual(len(cm.delayed_actions), 0)
-        
-        # 威力驗證：
-        # 1d20 = 15 -> 玩家 INT = 10 -> (10 * (15/15)) = 10 點基礎威力
-        # 第一發傷害：防禦 10，最多折抵 80% (10 * 0.8 = 8) -> 10 - 8 = 2.0 點真實傷害。
-        # 殘響威力減半 (50% 威力) -> 5 點基礎威力
-        # 殘響防禦最多折抵 80% (5 * 0.8 = 4) -> 5 - 4 = 1.0 點真實傷害。
-        # 總共造成 3 點傷害 -> 怪物 HP 100 -> 97.0.
-        self.assertEqual(self.monsters[0]["hp"], 97.0)
+            # 下一回合輪到怪物，隨後切回玩家回合開始
+            # 我們直接模擬 next_turn 回到玩家回合
+            cm.current_turn_idx = 1
+            cm.next_turn() # 會切換到玩家，並自動觸發殘響 tick！
+            
+            # 驗證殘響已執行，且 delayed_actions 佇列被排空
+            self.assertEqual(len(cm.delayed_actions), 0)
+            
+            # 威力驗證：
+            # 1d20 = 15 -> 玩家 INT = 10 -> (10 * (15/15)) = 10 點基礎威力
+            # 第一發傷害：防禦 10，最多折抵 80% (10 * 0.8 = 8) -> 10 - 8 = 2.0 點真實傷害。
+            # 殘響威力減半 (50% 威力) -> 5 點基礎威力
+            # 殘響防禦最多折抵 80% (5 * 0.8 = 4) -> 5 - 4 = 1.0 點真實傷害。
+            # 總共造成 3 點傷害 -> 怪物 HP 100 -> 97.0.
+            self.assertEqual(self.monsters[0]["hp"], 97.0)
 
     async def test_berserk_force_attack(self):
         """驗證 Berserk 狂暴狀態下阻止技能施放並強制作普攻"""

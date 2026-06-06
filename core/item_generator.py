@@ -110,6 +110,8 @@ async def generate_equipment_by_ai(
     **【雙軌預算規範 (務必遵守)】**
     1. 裝備等級 (ILv): {item_level} | 稀有度: {tier}
     2. 主屬性預算 (STR, DEX, CON, INT, WIS, CHA): {budgets['primary']} 點。
+       - 裝備根節點的 `scaling_stat` 僅能為以下大寫之一：`"STR"`, `"DEX"`, `"INT"`, `"WIS"`, `"CHA"`, `"CON"`。
+       - ⚠️ 嚴禁將 `scaling_stat` 設為 `"luck"` 或任何其他不支援的屬性。
        - 防護具務必將大部分主預算分配給 `CON`。請務必用滿主屬性預算。
     3. 附屬性預算 (戰鬥/特殊屬性): {budgets['sub']} 點.
        - 你的附屬性槽位上限為: {affix_slots} 條。
@@ -135,44 +137,53 @@ async def generate_equipment_by_ai(
        - `on_dice` (擲骰計算前)
        - `on_calculate_damage` (傷害防禦減免計算前)
 
-    2. **合法行動 (Action)**：
-       - `inflict_damage`: `flat_value`, `scaling_stat` (僅限 STR, DEX, CON, INT, WIS, CHA, MAX_HP, DAMAGE_TAKEN), `multiplier` (屬性倍率。無係數則全設為 null)
-       - `gain_shield`: `flat_value`, `scaling_stat`, `multiplier`, `target` (caster)
-       - `heal`: `flat_value`, `scaling_stat`, `multiplier`, `target` (caster), `target_resource` (hp/mp/sanity)
+    2. **合法行動 (Action) 與參數**：
+       - `inflict_damage`: `flat_value`, `scaling_stat`, `value_multiplier` (無係數則全設為 null), `dice` (獨立字串，如 "1d20"), `divisor` (除數浮點數，如 10.0), `target`
+       - `gain_shield`: `flat_value`, `scaling_stat`, `value_multiplier`, `dice`, `divisor`, `target`
+       - `heal`: `flat_value`, `scaling_stat`, `value_multiplier`, `dice`, `divisor`, `target`, `target_resource` (hp/mp/sanity)
        - `apply_status`: `status_name`, `duration`, `stat_bonuses` (限 p_def, m_def, crit_rate, evasion_rate, accuracy, skill_power, tenacity, luck)
        - `apply_debuff`: `debuff_name`, `duration`, `stat_bonuses`, `target` (target)
        - `remove_status`: `status_name`, `target`
        - `purge_debuffs`: 清除所有負面狀態，支援 `target` (預設為 caster)（⚠️ 注意：僅當描述明確提及『清除狀態/驅散/淨化/解控』時才可使用，未提及時嚴禁填寫！）
-       - `apply_shield`: `shield_name` (預設 Shield), `con_multiplier` (體質倍率), `duration`, `target` (預設為 caster)（⚠️ 注意：僅當描述明確提及『獲得護盾』時才可使用，未提及時嚴禁填寫！）
+       - `apply_shield`: `shield_name` (預設 Shield), `flat_value`, `scaling_stat`, `value_multiplier`, `dice`, `divisor`, `duration`, `target`（⚠️ 注意：僅當描述明確提及『獲得護盾』時才可使用，未提及時嚴禁填寫！）
        - `call_special`: `keyword_name` (限定為 Time_Warp 或 Prevent_Death)
        - `modify_dice`: `param` (floor_value 或 roll_modifier), `param_value` (整數)
        - `set_value`: `param` (damage_multiplier 或 defense_ignore_ratio), `param_value` (浮點數)
 
-    **【🚨 觸發事件與行為的隔離鐵律 (嚴禁違反)】**
-    - 數值攔截事件（`on_cast`, `on_dice`, `on_calculate_damage`）**只能**觸發 `set_value`, `modify_dice` 行為！
+    **【🚨 欄位型態防錯鐵律 (嚴禁違反)】**
+    - `flat_value` **必須是純數字浮點數**（如 15.0，或 0.0）。若需要使用骰子（如 1d20），請**獨立使用字串欄位 `"dice": "1d20"` 配合除數 `"divisor": 10.0`**，**嚴禁將骰子或運算元寫入 `flat_value` 中！**
+
+    **【🚨 觸發事件與行為的隔離時序鐵律 (嚴禁違反)】**
+    - `modify_dice` 與 `set_value` **只能**搭配 `on_dice`, `on_calculate_damage` 或 `on_cast` 事件！絕對不可放在 `on_hit` 或 `on_turn_end`！
     - 普通戰鬥事件（`on_hit`, `on_turn_start`, `on_health_below` 等其他所有事件）**只能**觸發 `inflict_damage`, `heal`, `gain_shield`, `apply_status`, `apply_debuff`, `remove_status`, `purge_debuffs`, `apply_shield`, `call_special` 等行為！
+
+    **【🚨 條件限制的同級扁平鐵律 (嚴禁違反)】**
+    - 所有條件限制欄位（如 `hp_below`, `hp_above`, `caster_has_status` 等）**必須與 `event` 同級**，作為 Trigger 物件的直接扁平屬性，**嚴禁將它們包裝在巢狀的 `conditions` 或其它自創的子物件內**！
+
+    **【🚨 目標標籤統一限制鐵律 (嚴禁違反)】**
+    - 所有的 `target` 欄位，**僅允許填寫**以下四個字彙之一：`'caster'` (自身), `'target'` (目標/對手), `'all_enemies'` (全體敵人), `'all_allies'` (全體盟友/召喚物)！**嚴禁自創**如 `"enemy"`, `"self"`, `"all"` 等詞彙！
+    - 允許對 `'caster'` (自身) 進行 `inflict_damage` 行動以扣除自身生命。
 
     **【🚨 瀕死救急/生命百分比觸發鐵律 (防錯與體積縮小 90%)】**
     - 當效果為「當生命值低於 XX% 時觸發」的緊急防禦/救急效果，**你必須使用 `on_health_below` 事件**，並配合填寫限制條件 `hp_below`（百分比必須是 1-100 的整數，如 40，嚴禁寫成 0.4！）。嚴禁使用 `on_turn_start` 來做生命值百分比觸發！
     - 此類生命值低於門檻觸發的救急防禦，**必須強制設置冷卻時間 `cooldown: 99`**（表示每場戰鬥限一次），防止無限重複觸發。
     - **【⚠️ 嚴禁加戲】你必須嚴格遵循玩家描述的功能，嚴禁自行添加玩家沒有要求的機制**：
-      - **只有當玩家描述中白紙黑字明確提及『清除所有負面狀態/驅散/淨化/解控』等字眼時**，才可以使用 `purge_debuffs`。**嚴禁**因為看到『無敵護盾』、『絕對領域』、『庇佑』等詞彙就自行演繹、腦補加上 `purge_debuffs`！若無提及，嚴禁填寫！
+      - **只有當玩家描述中白紙黑字明確提及『清除所有負面狀態/驅散/淨化/解控』等字眼時**，才可以使用 `purge_debuffs`。若無提及，嚴禁填寫！
       - **只有當玩家描述中明確提及『獲得護盾』時**，才可以使用 `apply_shield`。若無提及，嚴禁填寫！
-      - 當需要使用清除狀態與護盾時，**你必須優先且僅能使用複合行動 `purge_debuffs` 與 `apply_shield`**。嚴禁將其拆解為多個 `remove_status` 或 `gain_shield` 行動，這可以讓 JSON 體積縮小 90% 以上！
 
-    **【條件限制 (非必填，僅限以下欄位，無則不填)】**
-    - `hp_below` (小於指定血量百分比，必須是 1-100 的整數，如 40), `hp_above` (大於指定血量百分比，必須是 1-100 的整數)
+    **【條件限制 (非必填，與 event 同級，無則不填)】**
+    - `hp_below` (必須是 1-100 的整數，如 40), `hp_above` (必須是 1-100 的整數)
     - `caster_has_status` / `caster_not_status` (自身狀態判定)
     - `target_has_status` / `target_not_status` (目標狀態判定)
     - `cooldown` (整數冷卻), `chance` (浮點數機率，例如 0.3)
 
     **【裝備主題分類參考 (⚠️ 僅在描述有提及時才可搭配)】**
-    以下分類關鍵字僅供你挑選零件的『靈感』。即使主題中推薦了某個零件，若玩家的描述中沒有提及該功能，**你依然嚴禁填寫該零件**！例如：描述未提到清除狀態/解控，即使主題推薦了 `purge_debuffs`，你也絕對不准填寫！
+    以下分類關鍵字僅供你挑選零件的『靈感』。即使主題中推薦了某個零件，若玩家的描述中沒有提及該功能，**你依然嚴禁填寫該零件**！
     {theme_guide}
 
     回應請「只」輸出 JSON，不要有任何其他解釋。
 
-    **【JSON 格式範例 (以 T1 王者之劍為例)】**
+    **【JSON 格式範例 (普通傷害/減益觸發)】**
     {{
         "slot_type": "{slot_type}",
         "tier": "{tier}",
@@ -198,7 +209,80 @@ async def generate_equipment_by_ai(
                     {{
                         "action_type": "apply_debuff",
                         "debuff_name": "Burn",
-                        "duration": 3
+                        "duration": 3,
+                        "target": "target"
+                    }}
+                ]
+            }}
+        ]
+    }}
+
+    **【JSON 格式範例 (擲骰與分支機制 - 如賭神骰子)】**
+    {{
+        "slot_type": "{slot_type}",
+        "tier": "{tier}",
+        "item_level": {item_level},
+        "is_two_handed": false,
+        "weapon_type": "手套",
+        "damage_type": "physical",
+        "scaling_stat": "DEX",
+        "bonuses": {{
+            "DEX": 15.0
+        }},
+        "executable_triggers": [
+            {{
+                "event": "on_turn_start",
+                "dice_roll": "1d2",
+                "actions": [
+                    {{
+                        "action_type": "apply_status",
+                        "status_name": "狂暴",
+                        "duration": 2,
+                        "dice_range": [2, 2],
+                        "target": "caster"
+                    }},
+                    {{
+                        "action_type": "inflict_damage",
+                        "flat_value": 10.0,
+                        "dice_range": [1, 1],
+                        "target": "caster"
+                    }}
+                ]
+            }}
+        ]
+    }}
+
+    **【JSON 格式範例 (數值滾骰子與多目標傷害 - 如雷神之錘)】**
+    {{
+        "slot_type": "{slot_type}",
+        "tier": "{tier}",
+        "item_level": {item_level},
+        "is_two_handed": true,
+        "weapon_type": "雙手錘",
+        "damage_type": "physical",
+        "scaling_stat": "STR",
+        "bonuses": {{
+            "STR": 25.0
+        }},
+        "executable_triggers": [
+            {{
+                "event": "on_hit",
+                "chance": 0.4,
+                "actions": [
+                    {{
+                        "action_type": "inflict_damage",
+                        "flat_value": 25.0,
+                        "dice": "1d20",
+                        "divisor": 10.0,
+                        "scaling_stat": "STR",
+                        "value_multiplier": 1.0,
+                        "target": "all_enemies"
+                    }},
+                    {{
+                        "action_type": "apply_debuff",
+                        "debuff_name": "Burn",
+                        "duration": 3,
+                        "target": "all_enemies"
                     }}
                 ]
             }}
@@ -251,8 +335,13 @@ async def generate_equipment_by_ai(
                 parsed_data["description"] = ""
             if parsed_data.get("damage_type") is None:
                 parsed_data["damage_type"] = "physical"
-            if parsed_data.get("scaling_stat") is None:
+            
+            # Pydantic validation guard for scaling_stat
+            stat = parsed_data.get("scaling_stat")
+            if not isinstance(stat, str) or stat.upper() not in ["STR", "DEX", "INT", "WIS", "CHA", "CON"]:
                 parsed_data["scaling_stat"] = "STR"
+            else:
+                parsed_data["scaling_stat"] = stat.upper()
                 
             eq = Equipment(**parsed_data)
             eq.item_level = item_level

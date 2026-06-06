@@ -278,7 +278,7 @@ async def debug_equipment(
     if eq.executable_triggers:
         import json
         triggers_json = json.dumps(eq.executable_triggers, indent=2, ensure_ascii=False)
-        embed.add_field(name="⚙️ 觸發器機制 (Triggers)", value=f"```json\n{triggers_json}\n```", inline=False)
+        embed.add_field(name="⚙️ 觸發器機制 (Triggers) (以測試通過)", value=f"```json\n{triggers_json}\n```", inline=False)
     
     user_id = str(interaction.user.id)
     char = Character.load(user_id)

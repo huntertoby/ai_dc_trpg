@@ -470,11 +470,30 @@ class TriggerEngine:
                 if not TriggerEngine._check_target_health_filters(trigger, target):
                     continue
                 
+                # Branching logic: If the trigger specifies a dice_roll, we roll it first.
+                trigger_dice_val = None
+                dice_roll_str = trigger.get("dice_roll")
+                if dice_roll_str:
+                    from core.skill_processor import SkillProcessor
+                    trigger_dice_val = SkillProcessor.roll_dice(dice_roll_str)
+                    
+                    source_name = TriggerEngine._get_name(caster)
+                    log_msg = f"🎲 {source_name} 進行觸發擲骰 [{dice_roll_str}]，結果為：{trigger_dice_val} 點！"
+                    if combat_manager:
+                        combat_manager.battle_logs.append(log_msg)
+                    logs.append(log_msg)
+                
                 executed_any = False
                 for action in trigger.get("actions", []):
                     chance = action.get("chance", 1.0)
                     if chance < 1.0 and random.random() > chance:
                         continue
+                    
+                    # Check dice range constraint if dice_range is defined
+                    dice_range = action.get("dice_range")
+                    if dice_range:
+                        if trigger_dice_val is None or not (dice_range[0] <= trigger_dice_val <= dice_range[1]):
+                            continue
                     
                     action_type = action.get("action_type")
                     target_str = action.get("target", "target")
@@ -489,12 +508,26 @@ class TriggerEngine:
                             mult = action.get("value_multiplier", 1.0)
                             damage_type = action.get("damage_type", "true_damage")
                             
+                            # Roll action-level dice if specified
+                            dice_mult = 1.0
+                            dice_str = action.get("dice")
+                            divisor = action.get("divisor", 1.0)
+                            action_dice_roll = 0
+                            if dice_str:
+                                from core.skill_processor import SkillProcessor
+                                action_dice_roll = SkillProcessor.roll_dice(dice_str)
+                                div = divisor if divisor != 0 else 1.0
+                                dice_mult = action_dice_roll / div
+                            
                             val = flat
                             if stat:
                                 if stat.upper() == "DAMAGE_TAKEN":
-                                    val += kwargs.get("damage", 0) * mult
+                                    val += kwargs.get("damage", 0) * mult * dice_mult
                                 else:
-                                    val += get_entity_stat(caster, stat) * mult
+                                    val += get_entity_stat(caster, stat) * mult * dice_mult
+                            else:
+                                if dice_str:
+                                    val += dice_mult
                             
                             val = int(round(val))
                             if val > 0:
@@ -510,7 +543,10 @@ class TriggerEngine:
                                     )
                                     source_name = TriggerEngine._get_name(caster)
                                     target_name = TriggerEngine._get_name(action_target)
-                                    log_msg = f"💥 觸發效果：{source_name} 對 {target_name} 額外造成 {actual} 點 {damage_type} 傷害！"
+                                    dmg_type_cn = "真實" if damage_type == "true_damage" else damage_type
+                                    log_msg = f"💥 觸發效果：{source_name} 對 {target_name} 額外造成 {actual} 點 {dmg_type_cn} 傷害！"
+                                    if dice_str:
+                                        log_msg += f" (🎲 判定: {action_dice_roll} ({dice_str}))"
                                     combat_manager.battle_logs.append(log_msg)
                                     if dmg_logs:
                                         combat_manager.battle_logs.extend(dmg_logs)
@@ -525,12 +561,26 @@ class TriggerEngine:
                             stat = action.get("scaling_stat")
                             mult = action.get("value_multiplier", 1.0)
                             
+                            # Roll action-level dice if specified
+                            dice_mult = 1.0
+                            dice_str = action.get("dice")
+                            divisor = action.get("divisor", 1.0)
+                            action_dice_roll = 0
+                            if dice_str:
+                                from core.skill_processor import SkillProcessor
+                                action_dice_roll = SkillProcessor.roll_dice(dice_str)
+                                div = divisor if divisor != 0 else 1.0
+                                dice_mult = action_dice_roll / div
+                            
                             val = flat
                             if stat:
                                 if stat.upper() == "DAMAGE_TAKEN":
-                                    val += kwargs.get("damage", 0) * mult
+                                    val += kwargs.get("damage", 0) * mult * dice_mult
                                 else:
-                                    val += get_entity_stat(caster, stat) * mult
+                                    val += get_entity_stat(caster, stat) * mult * dice_mult
+                            else:
+                                if dice_str:
+                                    val += dice_mult
                             
                             val = int(round(val))
                             if val > 0:
@@ -540,6 +590,8 @@ class TriggerEngine:
                                 
                                 target_name = TriggerEngine._get_name(action_target)
                                 log_msg = f"🛡️ 觸發效果：{target_name} 獲得了 {val} 點臨時護盾！"
+                                if dice_str:
+                                    log_msg += f" (🎲 判定: {action_dice_roll} ({dice_str}))"
                                 if combat_manager:
                                     combat_manager.battle_logs.append(log_msg)
                                 logs.append(log_msg)
@@ -551,12 +603,26 @@ class TriggerEngine:
                             mult = action.get("value_multiplier", 1.0)
                             resource = action.get("target_resource", "hp")
                             
+                            # Roll action-level dice if specified
+                            dice_mult = 1.0
+                            dice_str = action.get("dice")
+                            divisor = action.get("divisor", 1.0)
+                            action_dice_roll = 0
+                            if dice_str:
+                                from core.skill_processor import SkillProcessor
+                                action_dice_roll = SkillProcessor.roll_dice(dice_str)
+                                div = divisor if divisor != 0 else 1.0
+                                dice_mult = action_dice_roll / div
+                            
                             val = flat
                             if stat:
                                 if stat.upper() == "DAMAGE_TAKEN":
-                                    val += kwargs.get("damage", 0) * mult
+                                    val += kwargs.get("damage", 0) * mult * dice_mult
                                 else:
-                                    val += get_entity_stat(caster, stat) * mult
+                                    val += get_entity_stat(caster, stat) * mult * dice_mult
+                            else:
+                                if dice_str:
+                                    val += dice_mult
                             
                             val = int(round(val))
                             if val > 0:
@@ -567,6 +633,8 @@ class TriggerEngine:
                                 target_name = TriggerEngine._get_name(action_target)
                                 res_name = "生命值" if resource == "hp" else ("魔法值" if resource == "mp" else "理智值")
                                 log_msg = f"💚 觸發效果：為 {target_name} 恢復了 {val} 點 {res_name}！"
+                                if dice_str:
+                                    log_msg += f" (🎲 判定: {action_dice_roll} ({dice_str}))"
                                 if combat_manager:
                                     combat_manager.battle_logs.append(log_msg)
                                 logs.append(log_msg)
