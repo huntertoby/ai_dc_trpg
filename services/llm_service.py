@@ -12,17 +12,28 @@ class LMStudioClient:
                   prompt: str,
                   system_prompt: Optional[str] = None,
                   temperature: float = 0.7,
-                  max_tokens: int = 16384) -> str:
+                  max_tokens: int = 16384,
+                  response_schema: Optional[dict] = None) -> str:
         messages = self._build_messages(prompt, system_prompt)
 
+        kwargs: Dict = dict(
+            model=self.model,
+            messages=messages,
+            temperature=temperature,
+            max_tokens=max_tokens
+        )
+        if response_schema:
+            kwargs["response_format"] = response_schema
+
         try:
-            response = await self.client.chat.completions.create(
-                model=self.model,
-                messages=messages,
-                temperature=temperature,
-                max_tokens=max_tokens
-            )
-            return response.choices[0].message.content
+            response = await self.client.chat.completions.create(**kwargs)
+            msg = response.choices[0].message
+            # Qwen3 / thinking models put the final answer in reasoning_content
+            # when response_format is set; content is empty in that case.
+            content = msg.content
+            if not content:
+                content = getattr(msg, "reasoning_content", None) or ""
+            return content
         except Exception as e:
             return f"Error calling LM Studio: {str(e)}"
 

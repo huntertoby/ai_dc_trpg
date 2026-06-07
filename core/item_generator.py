@@ -8,17 +8,113 @@ from core.compiler import TriggerCompiler
 import json
 import re
 
+# ---------------------------------------------------------------------------
+# Stage 1 JSON Schema（強制 LM Studio grammar-based sampling）
+# ---------------------------------------------------------------------------
+EQUIPMENT_STAGE1_SCHEMA = {
+    "type": "json_schema",
+    "json_schema": {
+        "name": "equipment_stage1",
+        "strict": True,
+        "schema": {
+            "type": "object",
+            "properties": {
+                "slot_type":      {"type": "string"},
+                "tier":           {"type": "string"},
+                "item_level":     {"type": "integer"},
+                "is_two_handed":  {"type": "boolean"},
+                "weapon_type":    {"type": ["string", "null"]},
+                "damage_type":    {"type": "string"},
+                "scaling_stat":   {
+                    "type": "string",
+                    "enum": ["STR", "DEX", "CON", "INT", "WIS", "CHA"]
+                },
+                "bonuses": {
+                    "type": "object",
+                    "additionalProperties": {"type": "number"}
+                },
+                "executable_triggers": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "event":    {"type": "string"},
+                            "chance":   {"type": ["number", "null"]},
+                            "cooldown": {"type": ["integer", "null"]},
+                            "hp_below": {"type": ["integer", "null"]},
+                            "hp_above": {"type": ["integer", "null"]},
+                            "caster_has_status":  {"type": ["string", "null"]},
+                            "caster_not_status":  {"type": ["string", "null"]},
+                            "target_has_status":  {"type": ["string", "null"]},
+                            "target_not_status":  {"type": ["string", "null"]},
+                            "dice_roll": {"type": ["string", "null"]},
+                            "actions": {
+                                "type": "array",
+                                "items": {
+                                    "type": "object",
+                                    "properties": {
+                                        "action_type":     {"type": "string"},
+                                        "target":          {"type": ["string", "null"]},
+                                        "flat_value":      {"type": ["number", "null"]},
+                                        "scaling_stat":    {"type": ["string", "null"]},
+                                        "value_multiplier":{"type": ["number", "null"]},
+                                        "dice":            {"type": ["string", "null"]},
+                                        "divisor":         {"type": ["number", "null"]},
+                                        "status_name":     {"type": ["string", "null"]},
+                                        "debuff_name":     {"type": ["string", "null"]},
+                                        "duration":        {"type": ["integer", "null"]},
+                                        "target_resource": {"type": ["string", "null"]},
+                                        "stat_bonuses":    {"type": ["object", "null"]},
+                                        "dice_range":      {"type": ["array", "null"]},
+                                        "keyword_name":    {"type": ["string", "null"]},
+                                        "param":           {"type": ["string", "null"]},
+                                        "param_value":     {"type": ["number", "null"]}
+                                    },
+                                    "required": ["action_type"]
+                                }
+                            }
+                        },
+                        "required": ["event", "actions"]
+                    }
+                }
+            },
+            "required": [
+                "slot_type", "tier", "item_level", "is_two_handed",
+                "scaling_stat", "bonuses", "executable_triggers"
+            ]
+        }
+    }
+}
+
+EQUIPMENT_STAGE2_SCHEMA = {
+    "type": "json_schema",
+    "json_schema": {
+        "name": "equipment_stage2",
+        "strict": True,
+        "schema": {
+            "type": "object",
+            "properties": {
+                "name":           {"type": "string"},
+                "description":    {"type": "string"},
+                "special_effect": {"type": "string"}
+            },
+            "required": ["name", "description", "special_effect"]
+        }
+    }
+}
+
+
 def format_triggers_to_pseudocode(triggers: list) -> str:
     if not triggers:
         return "無特殊戰鬥效果"
-    
+
     lines = []
     for i, t in enumerate(triggers):
         event = t.get("event")
         cond = t.get("condition")
         chance = t.get("chance")
         cooldown = t.get("cooldown")
-        
+
         info = f"效果 {i+1}：觸發事件 [{event}]"
         if chance is not None:
             info += f"，觸發機率 [{int(float(chance)*100)}%]"
@@ -26,21 +122,21 @@ def format_triggers_to_pseudocode(triggers: list) -> str:
             info += f"，冷卻時間 [{cooldown} 回合]"
         if cond:
             info += f"，觸發條件 [{cond}]"
-            
+
         actions = []
         for act in t.get("actions", []):
             act_type = act.get("action_type")
             target = act.get("target")
             flat = act.get("flat_value", 0.0)
-            
+
             try:
                 flat_f = float(flat)
             except (ValueError, TypeError):
                 flat_f = 0.0
-                
+
             stat = act.get("scaling_stat")
             mult = act.get("value_multiplier")
-            
+
             if stat and mult:
                 if flat_f == 0.0:
                     val_str = f"{mult}x 自身的 {stat}"
@@ -48,7 +144,7 @@ def format_triggers_to_pseudocode(triggers: list) -> str:
                     val_str = f"{flat} + {mult}x 自身的 {stat}"
             else:
                 val_str = f"{flat}"
-            
+
             if act_type == "inflict_damage":
                 actions.append(f"對 {target} 造成 {val_str} 點真實傷害")
             elif act_type == "gain_shield":
@@ -66,20 +162,49 @@ def format_triggers_to_pseudocode(triggers: list) -> str:
                 actions.append(status_info)
             elif act_type == "remove_status":
                 actions.append(f"清除 {target} 身上的狀態【{act.get('status_name')}】")
+            elif act_type == "purge_debuffs":
+                actions.append(f"清除 {target} 身上的所有負面狀態")
             elif act_type == "call_special_mechanic":
                 actions.append(f"觸發系統核心特殊機制【{act.get('keyword_name')}】對象為 {target}")
             elif act_type == "modify_dice":
                 actions.append(f"修改擲骰結果 [{act.get('param')}] 為 [{act.get('param_value')}]")
             elif act_type == "set_value":
                 actions.append(f"設置計算數值 [{act.get('param')}] 為 [{act.get('param_value')}]")
-        
+
         info += " ➔ 行動：" + "、".join(actions)
         lines.append(info)
     return "\n".join(lines)
 
+
+def _build_theme_hint(description: str) -> str:
+    """
+    根據玩家描述動態產生少量主題提示，取代原本整塊 EQUIPMENT_KEYWORDS 注入。
+    只在描述有明確關鍵字時才加入對應的狀態名稱建議，減少無關 token。
+    """
+    desc = description.lower()
+    hints = []
+
+    if any(w in desc for w in ["火", "燃燒", "灼", "炎", "flame", "fire", "burn"]):
+        hints.append("火焰主題可用狀態名稱：Burn")
+    if any(w in desc for w in ["冰", "霜", "凍", "frost", "ice", "freeze"]):
+        hints.append("冰霜主題可用狀態名稱：Slow、Frostbite")
+    if any(w in desc for w in ["雷", "電", "閃", "thunder", "lightning", "shock"]):
+        hints.append("雷電主題可用狀態名稱：Stun、Slow")
+    if any(w in desc for w in ["暗", "影", "詛咒", "死", "doom", "shadow", "curse", "blind"]):
+        hints.append("暗影主題可用狀態名稱：Blind、Doom、Slow")
+    if any(w in desc for w in ["聖", "神", "治療", "淨化", "holy", "divine", "heal", "bless"]):
+        hints.append("神聖主題可用狀態名稱：Bless、Shield、Immune")
+    if any(w in desc for w in ["風", "速", "閃避", "隱", "wind", "swift", "evasion", "invis"]):
+        hints.append("疾風主題可用狀態名稱：Invis、Slow")
+
+    if not hints:
+        return ""
+    return "【主題狀態提示（僅在描述有提及時才可使用）】\n" + "\n".join(f"- {h}" for h in hints)
+
+
 async def generate_equipment_by_ai(
-    description: str, 
-    item_level: int, 
+    description: str,
+    item_level: int,
     tier: Literal["T1", "T2", "T3", "T4", "T5"],
     slot_type: str,
     llm_client
@@ -90,264 +215,260 @@ async def generate_equipment_by_ai(
     budgets = EquipmentBalancer.calculate_budgets(item_level, tier)
     affix_slots = EquipmentBalancer.AFFIX_SLOTS.get(tier, 0)
 
-    # 獲取合法武器類型列表與分類關鍵字供 AI 參考
-    from core.constants import WEAPON_TYPES, EQUIPMENT_KEYWORDS
+    from core.constants import WEAPON_TYPES
     weapon_list_str = ", ".join(WEAPON_TYPES.keys())
-    
-    # 格式化主題分類引導
-    theme_guide = ""
-    for k, v in EQUIPMENT_KEYWORDS.items():
-        theme_guide += f"- **{k}** ({v['description']}):\n"
-        theme_guide += f"  * 事件: {', '.join(v['events'])}\n"
-        theme_guide += f"  * 行為: {', '.join(v['actions'])}\n"
-        theme_guide += f"  * 內建狀態: {', '.join(v['statuses'])}\n"
 
-    # --- 階段 1 System Prompt (僅設計裝備基礎數值與扁平參數) ---
-    system_prompt_stage1 = f"""
-    你是一個專業的 TRPG 數值設計師。請根據玩家的描述，設計一件裝備。
-    你**必須**生成的裝備部位 (slot_type) 是：`{slot_type}`。
+    # 動態主題提示（只在描述有對應關鍵字時才注入）
+    theme_hint = _build_theme_hint(description)
 
-    **【雙軌預算規範 (務必遵守)】**
-    1. 裝備等級 (ILv): {item_level} | 稀有度: {tier}
-    2. 主屬性預算 (STR, DEX, CON, INT, WIS, CHA): {budgets['primary']} 點。
-       - 裝備根節點的 `scaling_stat` 僅能為以下大寫之一：`"STR"`, `"DEX"`, `"INT"`, `"WIS"`, `"CHA"`, `"CON"`。
-       - ⚠️ 嚴禁將 `scaling_stat` 設為 `"luck"` 或任何其他不支援的屬性。
-       - 防護具務必將大部分主預算分配給 `CON`。請務必用滿主屬性預算。
-    3. 附屬性預算 (戰鬥/特殊屬性): {budgets['sub']} 點.
-       - 你的附屬性槽位上限為: {affix_slots} 條。
-       - 合法附屬性限制在：`crit_rate`, `evasion_rate`, `accuracy`, `skill_power`, `tenacity`, `luck`。
-    
-    **【傳說特效樂高零件規範 (僅限 T1)】**
-    當稀有度為 `T1` 時，你**必須**在 `executable_triggers` 中為其設計 1~2 條傳說特效。
-    為了防錯，你**只能**使用以下「平鋪樂高零件」，嚴禁使用任何巢狀 trigger 或 flag 設定：
+    # -----------------------------------------------------------------------
+    # 階段 1 System Prompt
+    # 設計原則：
+    #   - 移除 on_cast（已在 compiler 轉為攔截器，語意易混淆）
+    #   - apply_status / apply_debuff   明確分離，各自有固定 target 預設
+    #   - modify_dice / set_value 獨立成「進階攔截器」區塊，禁止與基礎效果混用
+    #   - 移除 purge_debuffs / apply_shield 的主動列舉（只在最後附帶說明）
+    #   - 不再注入 EQUIPMENT_KEYWORDS 全表，改用動態 theme_hint
+    # -----------------------------------------------------------------------
+    system_prompt_stage1 = f"""你是一個專業的 TRPG 數值設計師。請根據玩家的描述，設計一件裝備。
+裝備部位 (slot_type) 必須是：`{slot_type}`。
 
-    1. **合法事件 (Event)**：
-       - `on_battle_start` (戰鬥開始時)
-       - `on_turn_start` (每回合開始時)
-       - `on_turn_end` (每回合結束時)
-       - `on_cast` (施放主動技能時)
-       - `on_hit` (擊中目標後)
-       - `on_damaged` (自身受到傷害後)
-       - `on_kill` (擊殺敵人時)
-       - `on_crit` (造成爆擊時)
-       - `on_miss` (攻擊未命中時)
-       - `on_dodge` (閃避攻擊時)
-       - `on_fatal_damage` (瀕死致命傷前)
-       - `on_health_below` (自身生命值低於指定百分比後，必須附帶 hp_below)
-       - `on_dice` (擲骰計算前)
-       - `on_calculate_damage` (傷害防禦減免計算前)
+【預算規範】
+- 裝備等級: {item_level} | 稀有度: {tier}
+- 主屬性預算 (STR/DEX/CON/INT/WIS/CHA): {budgets['primary']} 點，請用滿。防具優先分配 CON。
+- 附屬性預算: {budgets['sub']} 點，上限 {affix_slots} 條。
+  合法附屬性：crit_rate, evasion_rate, accuracy, skill_power, tenacity, luck
+- scaling_stat 只能填：STR / DEX / CON / INT / WIS / CHA（大寫）
 
-    2. **合法行動 (Action) 與參數**：
-       - `inflict_damage`: `flat_value`, `scaling_stat`, `value_multiplier` (無係數則全設為 null), `dice` (獨立字串，如 "1d20"), `divisor` (除數浮點數，如 10.0), `target`
-       - `gain_shield`: `flat_value`, `scaling_stat`, `value_multiplier`, `dice`, `divisor`, `target`
-       - `heal`: `flat_value`, `scaling_stat`, `value_multiplier`, `dice`, `divisor`, `target`, `target_resource` (hp/mp/sanity)
-       - `apply_status`: `status_name`, `duration`, `stat_bonuses` (限 p_def, m_def, crit_rate, evasion_rate, accuracy, skill_power, tenacity, luck)
-       - `apply_debuff`: `debuff_name`, `duration`, `stat_bonuses`, `target` (target)
-       - `remove_status`: `status_name`, `target`
-       - `purge_debuffs`: 清除所有負面狀態，支援 `target` (預設為 caster)（⚠️ 注意：僅當描述明確提及『清除狀態/驅散/淨化/解控』時才可使用，未提及時嚴禁填寫！）
-       - `apply_shield`: `shield_name` (預設 Shield), `flat_value`, `scaling_stat`, `value_multiplier`, `dice`, `divisor`, `duration`, `target`（⚠️ 注意：僅當描述明確提及『獲得護盾』時才可使用，未提及時嚴禁填寫！）
-       - `call_special`: `keyword_name` (限定為 Time_Warp 或 Prevent_Death)
-       - `modify_dice`: `param` (floor_value 或 roll_modifier), `param_value` (整數)
-       - `set_value`: `param` (damage_multiplier 或 defense_ignore_ratio), `param_value` (浮點數)
+【T1 傳說特效規範】
+僅 T1 裝備需要在 executable_triggers 設計 1~2 條傳說特效。
+其他階級的 executable_triggers 必須是空陣列 []。
 
-    **【🚨 欄位型態防錯鐵律 (嚴禁違反)】**
-    - `flat_value` **必須是純數字浮點數**（如 15.0，或 0.0）。若需要使用骰子（如 1d20），請**獨立使用字串欄位 `"dice": "1d20"` 配合除數 `"divisor": 10.0`**，**嚴禁將骰子或運算元寫入 `flat_value` 中！**
+▌基礎效果零件（優先使用）
+合法事件：
+  on_battle_start（戰鬥開始）、on_turn_start（回合開始）、on_turn_end（回合結束）
+  on_hit（擊中後）、on_damaged（受傷後）、on_kill（擊殺後）
+  on_crit（爆擊後）、on_miss（未命中後）、on_dodge（閃避後）
+  on_fatal_damage（瀕死致命傷前）
+  on_health_below（生命低於門檻，必須同級附帶 hp_below，值為 1~100 整數）
 
-    **【🚨 觸發事件與行為的隔離時序鐵律 (嚴禁違反)】**
-    - `modify_dice` 與 `set_value` **只能**搭配 `on_dice`, `on_calculate_damage` 或 `on_cast` 事件！絕對不可放在 `on_hit` 或 `on_turn_end`！
-    - 普通戰鬥事件（`on_hit`, `on_turn_start`, `on_health_below` 等其他所有事件）**只能**觸發 `inflict_damage`, `heal`, `gain_shield`, `apply_status`, `apply_debuff`, `remove_status`, `purge_debuffs`, `apply_shield`, `call_special` 等行為！
+合法行動：
+  inflict_damage  → 對 target 造成真實傷害
+    欄位：flat_value（數字）, scaling_stat, value_multiplier, dice（字串如"1d20"）, divisor（浮點數）, target
+    target 只能填：caster / target / all_enemies / all_allies
 
-    **【🚨 條件限制的同級扁平鐵律 (嚴禁違反)】**
-    - 所有條件限制欄位（如 `hp_below`, `hp_above`, `caster_has_status` 等）**必須與 `event` 同級**，作為 Trigger 物件的直接扁平屬性，**嚴禁將它們包裝在巢狀的 `conditions` 或其它自創的子物件內**！
+  gain_shield     → 使 target 獲得護盾
+    欄位：flat_value, scaling_stat, value_multiplier, dice, divisor, target
 
-    **【🚨 目標標籤統一限制鐵律 (嚴禁違反)】**
-    - 所有的 `target` 欄位，**僅允許填寫**以下四個字彙之一：`'caster'` (自身), `'target'` (目標/對手), `'all_enemies'` (全體敵人), `'all_allies'` (全體盟友/召喚物)！**嚴禁自創**如 `"enemy"`, `"self"`, `"all"` 等詞彙！
-    - 允許對 `'caster'` (自身) 進行 `inflict_damage` 行動以扣除自身生命。
+  heal            → 使 target 恢復資源
+    欄位：flat_value, scaling_stat, value_multiplier, dice, divisor, target, target_resource（hp/mp/sanity）
 
-    **【🚨 瀕死救急/生命百分比觸發鐵律 (防錯與體積縮小 90%)】**
-    - 當效果為「當生命值低於 XX% 時觸發」的緊急防禦/救急效果，**你必須使用 `on_health_below` 事件**，並配合填寫限制條件 `hp_below`（百分比必須是 1-100 的整數，如 40，嚴禁寫成 0.4！）。嚴禁使用 `on_turn_start` 來做生命值百分比觸發！
-    - 此類生命值低於門檻觸發的救急防禦，**必須強制設置冷卻時間 `cooldown: 99`**（表示每場戰鬥限一次），防止無限重複觸發。
-    - **【⚠️ 嚴禁加戲】你必須嚴格遵循玩家描述的功能，嚴禁自行添加玩家沒有要求的機制**：
-      - **只有當玩家描述中白紙黑字明確提及『清除所有負面狀態/驅散/淨化/解控』等字眼時**，才可以使用 `purge_debuffs`。若無提及，嚴禁填寫！
-      - **只有當玩家描述中明確提及『獲得護盾』時**，才可以使用 `apply_shield`。若無提及，嚴禁填寫！
+  apply_status    → 【自身增益專用】對裝備者施加正面狀態，不需填 target（預設 caster）
+    欄位：status_name, duration, stat_bonuses
+    ⚠️ stat_bonuses 必填至少一個鍵，空 {{}} 代表無效果！
 
-    **【條件限制 (非必填，與 event 同級，無則不填)】**
-    - `hp_below` (必須是 1-100 的整數，如 40), `hp_above` (必須是 1-100 的整數)
-    - `caster_has_status` / `caster_not_status` (自身狀態判定)
-    - `target_has_status` / `target_not_status` (目標狀態判定)
-    - `cooldown` (整數冷卻), `chance` (浮點數機率，例如 0.3)
+    ┌─────────────── stat_bonuses 完整鍵值參考 ───────────────┐
+    │ 防禦類（integer）                                        │
+    │   p_def        物理防禦加成      e.g. {{"p_def": 30}}    │
+    │   m_def        魔法防禦加成      e.g. {{"m_def": 25}}    │
+    │                                                          │
+    │ 攻擊/爆擊類（float，爆擊率用 0.0~1.0）                   │
+    │   crit_rate    爆擊率加成        e.g. {{"crit_rate": 0.15}} │
+    │   skill_power  技能威力倍率加成  e.g. {{"skill_power": 0.3}} │
+    │                                                          │
+    │ 命中/迴避類（float，0.0~1.0）                            │
+    │   evasion_rate 迴避率加成        e.g. {{"evasion_rate": 0.1}} │
+    │   accuracy     命中率加成        e.g. {{"accuracy": 0.05}} │
+    │                                                          │
+    │ 其他戰鬥屬性（integer）                                  │
+    │   tenacity     韌性（減傷）加成  e.g. {{"tenacity": 40}} │
+    │   luck         幸運加成          e.g. {{"luck": 5}}      │
+    │                                                          │
+    │ 基礎屬性（integer）                                      │
+    │   STR/DEX/CON/INT/WIS/CHA       e.g. {{"STR": 15}}      │
+    └──────────────────────────────────────────────────────────┘
 
-    **【裝備主題分類參考 (⚠️ 僅在描述有提及時才可搭配)】**
-    以下分類關鍵字僅供你挑選零件的『靈感』。即使主題中推薦了某個零件，若玩家的描述中沒有提及該功能，**你依然嚴禁填寫該零件**！
-    {theme_guide}
+    快速對照（依狀態類型選擇）：
+      護盾/防禦狀態  → p_def 或 m_def（+20~50）
+      狂化/爆發狀態  → STR 或 crit_rate（STR +10~20 / crit_rate +0.1~0.2）
+      技能增幅狀態   → skill_power（+0.2~0.5）
+      靈敏/閃避狀態  → evasion_rate（+0.1~0.2）或 DEX（+10~20）
+      韌性/不屈狀態  → tenacity（+30~60）
+      智力/魔力狀態  → INT 或 skill_power
+    可同時填多鍵：{{"p_def": 25, "tenacity": 20}}
 
-    回應請「只」輸出 JSON，不要有任何其他解釋。
+  apply_debuff    → 【敵人減益專用】對目標施加負面狀態，不需填 target（預設 target）
+    欄位：debuff_name, duration, stat_bonuses
+    debuff 的 stat_bonuses 填負數以削弱目標：
+      {{"p_def": -20}}  削減物理防禦
+      {{"evasion_rate": -0.1}}  降低迴避
+      {{"crit_rate": -0.1}}  降低爆擊
+    或留空 {{}} 表示純標記型 debuff（如 Burn/Slow 由引擎硬編碼處理）
 
-    **【JSON 格式範例 (普通傷害/減益觸發)】**
+  remove_status   → 清除狀態
+    欄位：status_name, target
+
+  call_special    → 觸發特殊機制（限 Time_Warp 或 Prevent_Death）
+    欄位：keyword_name
+
+▌進階攔截器零件（僅在描述明確提及「骰子修改」或「無視防禦」時才使用）
+合法事件：on_dice（擲骰前）、on_calculate_damage（傷害計算前）
+合法行動：
+  modify_dice  → param: floor_value 或 roll_modifier，param_value: 整數
+  set_value    → param: damage_multiplier 或 defense_ignore_ratio，param_value: 浮點數
+
+⚠️ 進階攔截器行動（modify_dice / set_value）必須單獨放在 on_dice 或 on_calculate_damage 事件中，
+   嚴禁與 inflict_damage / heal 等基礎行動混放在同一個 trigger！
+
+▌觸發條件（非必填，與 event 同級）
+  chance（0.0~1.0）, cooldown（整數）
+  hp_below（整數 1~100）, hp_above（整數 1~100）
+  caster_has_status / caster_not_status, target_has_status / target_not_status
+
+  dice_roll + dice_range：【隨機分支】想讓同一觸發器根據骰點走不同結果時使用。
+    在 trigger 設 "dice_roll": "1d2"，再對每個 action 設 "dice_range": [min, max]，
+    骰點落在範圍內的 action 才執行，其餘跳過。
+    典型用途：「50% 狂化 OR 50% 自傷」、「三選一隨機異常狀態」等互斥效果。
+    ⚠️ 沒有 dice_roll 時，action 不需要填 dice_range（填了無效）。
+
+▌瀕死救急特別規則
+  使用 on_health_below 時，必須設 cooldown: 99（每場戰鬥限一次）。
+
+▌flat_value 型別規定
+  flat_value 只能是數字（如 15.0），嚴禁寫骰子字串。
+  骰子數值請用獨立的 dice 欄位（如 "dice": "1d20"）搭配 divisor。
+
+▌特殊行動附錄（只在描述明確提及時才使用）
+  purge_debuffs：清除目標所有負面狀態。僅當描述提到「驅散/淨化/解控」時才可使用。
+  apply_shield：施加護盾狀態。僅當描述提到「獲得護盾」時才可使用。
+    欄位：shield_name, flat_value, scaling_stat, value_multiplier, dice, divisor, duration, target
+
+{theme_hint}
+
+只輸出 JSON，不要任何說明文字。
+
+【JSON 範例 甲：進攻型武器（涵蓋：on_hit / on_turn_start / chance / cooldown / inflict_damage 完整三欄 / apply_debuff 標記型 / apply_debuff 削弱型 / dice_roll 隨機分支 / apply_status 增益）】
+{{
+  "slot_type": "{slot_type}",
+  "tier": "{tier}",
+  "item_level": {item_level},
+  "is_two_handed": false,
+  "weapon_type": "長劍",
+  "damage_type": "physical",
+  "scaling_stat": "STR",
+  "bonuses": {{"STR": 22.0, "crit_rate": 0.06}},
+  "executable_triggers": [
     {{
-        "slot_type": "{slot_type}",
-        "tier": "{tier}",
-        "item_level": {item_level},
-        "is_two_handed": false,
-        "weapon_type": "長劍", 
-        "damage_type": "physical", 
-        "scaling_stat": "STR", 
-        "bonuses": {{
-            "STR": 20.0,
-            "crit_rate": 0.05
-        }},
-        "executable_triggers": [
-            {{
-                "event": "on_hit",
-                "chance": 0.3,
-                "cooldown": 2,
-                "actions": [
-                    {{
-                        "action_type": "inflict_damage",
-                        "flat_value": 15.0
-                    }},
-                    {{
-                        "action_type": "apply_debuff",
-                        "debuff_name": "Burn",
-                        "duration": 3,
-                        "target": "target"
-                    }}
-                ]
-            }}
-        ]
-    }}
-
-    **【JSON 格式範例 (擲骰與分支機制 - 如賭神骰子)】**
+      "event": "on_hit",
+      "chance": 0.35,
+      "cooldown": 2,
+      "actions": [
+        {{"action_type": "inflict_damage", "flat_value": 28.0, "scaling_stat": "STR", "value_multiplier": 1.6, "target": "target"}},
+        {{"action_type": "apply_debuff", "debuff_name": "Burn", "duration": 3}}
+      ]
+    }},
     {{
-        "slot_type": "{slot_type}",
-        "tier": "{tier}",
-        "item_level": {item_level},
-        "is_two_handed": false,
-        "weapon_type": "手套",
-        "damage_type": "physical",
-        "scaling_stat": "DEX",
-        "bonuses": {{
-            "DEX": 15.0
-        }},
-        "executable_triggers": [
-            {{
-                "event": "on_turn_start",
-                "dice_roll": "1d2",
-                "actions": [
-                    {{
-                        "action_type": "apply_status",
-                        "status_name": "狂暴",
-                        "duration": 2,
-                        "dice_range": [2, 2],
-                        "target": "caster"
-                    }},
-                    {{
-                        "action_type": "inflict_damage",
-                        "flat_value": 10.0,
-                        "dice_range": [1, 1],
-                        "target": "caster"
-                    }}
-                ]
-            }}
-        ]
+      "event": "on_turn_start",
+      "dice_roll": "1d2",
+      "actions": [
+        {{"action_type": "apply_status", "status_name": "血怒", "duration": 2, "stat_bonuses": {{"STR": 18, "crit_rate": 0.18}}, "dice_range": [2, 2]}},
+        {{"action_type": "apply_debuff", "debuff_name": "破甲", "duration": 2, "stat_bonuses": {{"p_def": -22}}, "dice_range": [1, 1]}}
+      ]
     }}
+  ]
+}}
 
-    **【JSON 格式範例 (數值滾骰子與多目標傷害 - 如雷神之錘)】**
+【JSON 範例 乙：生存型防具（涵蓋：on_damaged / on_health_below / cooldown:99 救急 / apply_status 防禦增益 / heal 帶 scaling / gain_shield / 多行動同一 trigger）】
+{{
+  "slot_type": "{slot_type}",
+  "tier": "{tier}",
+  "item_level": {item_level},
+  "is_two_handed": false,
+  "weapon_type": null,
+  "damage_type": "physical",
+  "scaling_stat": "CON",
+  "bonuses": {{"CON": 22.0, "p_def": 14.0, "tenacity": 9.0}},
+  "executable_triggers": [
     {{
-        "slot_type": "{slot_type}",
-        "tier": "{tier}",
-        "item_level": {item_level},
-        "is_two_handed": true,
-        "weapon_type": "雙手錘",
-        "damage_type": "physical",
-        "scaling_stat": "STR",
-        "bonuses": {{
-            "STR": 25.0
-        }},
-        "executable_triggers": [
-            {{
-                "event": "on_hit",
-                "chance": 0.4,
-                "actions": [
-                    {{
-                        "action_type": "inflict_damage",
-                        "flat_value": 25.0,
-                        "dice": "1d20",
-                        "divisor": 10.0,
-                        "scaling_stat": "STR",
-                        "value_multiplier": 1.0,
-                        "target": "all_enemies"
-                    }},
-                    {{
-                        "action_type": "apply_debuff",
-                        "debuff_name": "Burn",
-                        "duration": 3,
-                        "target": "all_enemies"
-                    }}
-                ]
-            }}
-        ]
+      "event": "on_damaged",
+      "cooldown": 2,
+      "actions": [
+        {{"action_type": "apply_status", "status_name": "不屈之盾", "duration": 2, "stat_bonuses": {{"p_def": 32, "tenacity": 26}}}}
+      ]
+    }},
+    {{
+      "event": "on_health_below",
+      "hp_below": 30,
+      "cooldown": 99,
+      "actions": [
+        {{"action_type": "heal", "flat_value": 0.0, "scaling_stat": "CON", "value_multiplier": 1.8, "target": "caster"}},
+        {{"action_type": "gain_shield", "flat_value": 15.0, "scaling_stat": "CON", "value_multiplier": 0.6, "target": "caster"}}
+      ]
     }}
-    """
+  ]
+}}
+"""
 
     prompt = f"描述：{description}\n請嚴格依照部位 `{slot_type}` 生成裝備。"
 
-    # --- 階段 2 System Prompt (故事包裝與外觀描寫) ---
-    system_prompt_stage2 = """
-    你是一個優秀的奇幻 TRPG 故事設計師。請根據給定的裝備基礎數值以及經過編譯的戰鬥邏輯，為裝備撰寫一個超帥氣、令人驚嘆的中文名稱、背景故事以及寫實的效果說明。
+    # -----------------------------------------------------------------------
+    # 階段 2 System Prompt（故事包裝，使用 schema 強制輸出格式）
+    # -----------------------------------------------------------------------
+    system_prompt_stage2 = """你是一個優秀的奇幻 TRPG 故事設計師。根據裝備數值與編譯後的戰鬥邏輯，撰寫中文名稱、背景故事與效果說明。
 
-    **【🚨 故事與寫實效果包裝規則】**
-    1. **中文名稱 (name)**：必須具備高級感與詩意（例如：不要寫「火焰手套」，改寫「余燼灰滅之擁」）。
-    2. **背景描述 (description)**：深入描寫其外觀、質感與歷史淵源，字數 100 字左右，富有畫面感。
-    3. **特殊效果敘述 (special_effect)**：
-       - **自然語言轉換**：請將技術術語翻譯為符合遊戲說明的自然中文（例如：將 `caster` 翻譯為「自身」、「穿戴者」或「裝備者」；將 `target` 翻譯為「目標」或「敵方」），嚴禁在最終說明中直接出現 `caster` 或 `target` 等代碼英文。
-       - **寫實約束**：你必須**嚴格且誠實地**將傳入的「編譯後邏輯偽代碼」翻譯為自然語言，**嚴禁加入任何機制上不符合的詞彙**（例如：不能寫「秒殺神明」或「造成無敵」，除非偽代碼中包含 Prevent_Death 且數值真的能秒殺）。
-       - **數值 100% 吻合**：描述中提及的傷害數值、屬性倍率、狀態名稱與持續回合，**必須與偽代碼中的資料完全一致**。
-       - **特別約束**：若包含額外追加傷害 (inflict_damage)，請在描述中明確寫出「此額外傷害無視防禦力（真實傷害）」。
-    4. **非 T1 階級（T2、T3、T4、T5）的裝備，`special_effect` 欄位必須為空字串 `""`**。
+規則：
+1. name：具備高級感與詩意（例：不要寫「火焰手套」，改寫「余燼灰滅之擁」）。
+2. description：描寫外觀、質感與歷史淵源，約 100 字，富有畫面感。
+3. special_effect：
+   - 將 caster 翻譯為「裝備者」，target 翻譯為「目標」，嚴禁直接出現英文代碼。
+   - 嚴格且誠實地翻譯傳入的偽代碼，禁止添加未在偽代碼中存在的機制。
+   - 數值、狀態名稱、持續回合必須與偽代碼完全一致。
+   - 含 inflict_damage 時，需在說明中標注「無視防禦力（真實傷害）」。
+4. 非 T1 裝備的 special_effect 必須是空字串 ""。
 
-    回應請「只」輸出 JSON，不要有任何其他解釋。
+只輸出 JSON，不要任何說明文字。
 
-    **【JSON 格式範例】**
-    {
-        "name": "余燼灰滅之擁",
-        "description": "這副手套的邊緣已被無光之火熏得焦黑，當穿戴者握緊雙拳時，手套內部會隱隱流動起暗淡的橘紅熔岩，散發著硫磺與落敗王朝的餘溫。",
-        "special_effect": "神聖裁決：擊中敵人時有 30% 機率額外造成 15 點無視防禦力的真實傷害，且有 30% 機率對目標附加灼燒狀態，持續 3 回合；冷卻 2 回合。"
-    }
-    """
+範例：
+{
+  "name": "余燼灰滅之擁",
+  "description": "這副手套的邊緣已被無光之火熏得焦黑，穿戴者握緊雙拳時，內部隱隱流動著暗淡橘紅熔岩，散發硫磺與落敗王朝的餘溫。",
+  "special_effect": "灰燼裁決：擊中敵人時有 30% 機率額外造成 15 點無視防禦力的真實傷害，並對目標附加灼燒狀態持續 3 回合；冷卻 2 回合。"
+}
+"""
 
     try:
-        # --- 階段 1：生成基礎裝備與扁平觸發器 ---
+        # --- 階段 1：生成基礎裝備與扁平觸發器（使用 json_schema 強制格式）---
         response_text = await llm_client.call(
             prompt=prompt,
             system_prompt=system_prompt_stage1,
-            temperature=0.3
+            temperature=0.3,
+            response_schema=EQUIPMENT_STAGE1_SCHEMA
         )
-        
+
         from utils.json_utils import repair_and_parse_json
         parsed_data = repair_and_parse_json(response_text)
-        
+
         if parsed_data:
-            # 建立初步模型前的欄位防呆（Pydantic 驗證必填 name）
+            # 建立初步模型前的欄位防呆
             if "name" not in parsed_data:
                 parsed_data["name"] = "未命名"
             if "description" not in parsed_data:
                 parsed_data["description"] = ""
             if parsed_data.get("damage_type") is None:
                 parsed_data["damage_type"] = "physical"
-            
-            # Pydantic validation guard for scaling_stat
+
+            # scaling_stat 防呆
             stat = parsed_data.get("scaling_stat")
             if not isinstance(stat, str) or stat.upper() not in ["STR", "DEX", "INT", "WIS", "CHA", "CON"]:
                 parsed_data["scaling_stat"] = "STR"
             else:
                 parsed_data["scaling_stat"] = stat.upper()
-                
+
             eq = Equipment(**parsed_data)
             eq.item_level = item_level
             eq.tier = tier
             eq.slot_type = slot_type
-            
+
             # 手部武器預設防呆
             if slot_type in ["main_hand", "off_hand"] and not eq.weapon_type:
                 if eq.bonuses.get("INT", 0) > eq.bonuses.get("STR", 0):
@@ -361,7 +482,7 @@ async def generate_equipment_by_ai(
             if slot_type not in ["main_hand", "off_hand"]:
                 eq.weapon_type = None
 
-            # 運行 Python 編譯層進行 T1 觸發器編譯與優化
+            # 編譯 T1 觸發器
             if tier == "T1":
                 flat_triggers = parsed_data.get("executable_triggers", [])
                 compiled_triggers = TriggerCompiler.compile_flat_triggers(flat_triggers)
@@ -369,10 +490,10 @@ async def generate_equipment_by_ai(
             else:
                 eq.executable_triggers = []
 
-            # 套用主/附屬性預算雙軌制過濾器進行數值裁決與修正
+            # 套用預算過濾器
             eq = EquipmentBalancer.validate_and_clamp(eq)
 
-            # --- 階段 2：故事背景、自然語言特效包裝 ---
+            # --- 階段 2：故事背景、自然語言特效包裝（使用 json_schema 強制格式）---
             pseudocode = format_triggers_to_pseudocode(eq.executable_triggers)
             stage2_prompt = f"""請為以下裝備填寫令人驚嘆的中文名稱、故事背景，並將編譯後的邏輯偽代碼精確翻譯為寫實的特殊效果描述：
 
@@ -388,7 +509,8 @@ async def generate_equipment_by_ai(
                 response_stage2_text = await llm_client.call(
                     prompt=stage2_prompt,
                     system_prompt=system_prompt_stage2,
-                    temperature=0.2
+                    temperature=0.7,
+                    response_schema=EQUIPMENT_STAGE2_SCHEMA
                 )
                 parsed_stage2 = repair_and_parse_json(response_stage2_text)
                 if parsed_stage2:
@@ -398,20 +520,14 @@ async def generate_equipment_by_ai(
                         eq.special_effect = parsed_stage2.get("special_effect", "")
                     else:
                         eq.special_effect = ""
-            except Exception as e_stage2:
-                print(f"階段 2 故事包裝失敗，保持預設或空白: {e_stage2}")
-                if not eq.name:
-                    eq.name = "未命名傳奇裝備"
+            except Exception as e2:
+                print(f"Stage2 錯誤: {e2}")
 
-            return eq
         else:
-            print(f"JSON 解析失敗或為空。原始回應內容:\n{response_text}")
-            
+            return None
+
+        return eq
+
     except Exception as e:
-        print(f"生成裝備失敗: {e}")
-        try:
-            print(f"原始回應內容: {response_text}")
-        except NameError:
-            pass
+        print(f"generate_equipment 錯誤: {e}")
         return None
-    return None

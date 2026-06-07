@@ -1,7 +1,10 @@
 # core/compiler.py
 import re
 import uuid
+import logging
 from typing import List, Dict, Any, Tuple
+
+logger = logging.getLogger(__name__)
 
 class TriggerCompiler:
     # 戰鬥屬性 Key 映射表
@@ -23,11 +26,11 @@ class TriggerCompiler:
 
     # 攔截器事件
     INTERCEPTOR_EVENTS = {"on_prepare", "on_dice", "on_calculate_damage"}
-    
+
     # 後置普通事件
     COMBAT_EVENTS = {
-        "on_battle_start", "on_turn_start", "on_turn_end", "on_hit", 
-        "on_damaged", "on_kill", "on_health_below", "on_health_up", 
+        "on_battle_start", "on_turn_start", "on_turn_end", "on_hit",
+        "on_damaged", "on_kill", "on_health_below", "on_health_up",
         "on_crit", "on_miss", "on_dodge", "on_fatal_damage"
     }
 
@@ -45,11 +48,11 @@ class TriggerCompiler:
             if not isinstance(trigger_raw, dict):
                 continue
 
-            # 1. 解析事件與對應名稱修正 (on_cast -> on_prepare)
+            # 1. 解析事件與對應名稱修正 (on_cast -> on_prepare，已從 Stage1 prompt 移除，此處保留相容)
             event_raw = trigger_raw.get("event", "")
             if not isinstance(event_raw, str):
                 continue
-                
+
             event = event_raw.strip()
             if event == "on_cast":
                 event = "on_prepare"
@@ -60,7 +63,7 @@ class TriggerCompiler:
 
             # 2. 條件扁平化解析與轉譯
             conditions = []
-            
+
             # HP 門檻條件
             hp_below_val = None
             if "hp_below" in trigger_raw and trigger_raw["hp_below"] is not None:
@@ -108,17 +111,17 @@ class TriggerCompiler:
             dice_roll_str = trigger_raw.get("dice_roll")
             if dice_roll_str:
                 dice_roll_str = str(dice_roll_str).strip()
-            
+
             health_threshold = trigger_raw.get("health_threshold")
             if health_threshold is not None:
                 health_threshold = cls._parse_percent(health_threshold)
             elif event == "on_health_below" and hp_below_val is not None:
                 health_threshold = hp_below_val
-                
+
             target_health_below = trigger_raw.get("target_health_below")
             if target_health_below is not None:
                 target_health_below = cls._parse_percent(target_health_below)
-                
+
             target_health_above = trigger_raw.get("target_health_above")
             if target_health_above is not None:
                 target_health_above = cls._parse_percent(target_health_above)
@@ -148,7 +151,7 @@ class TriggerCompiler:
             if interceptor_actions and combat_actions:
                 # 建立隨機唯一的 Flag
                 unique_flag = f"_auto_flag_{uuid.uuid4().hex[:6]}"
-                
+
                 # A. 建立前置攔截器 Trigger
                 interceptor_event = event if event in cls.INTERCEPTOR_EVENTS else "on_calculate_damage"
                 trigger_a = {
@@ -162,7 +165,7 @@ class TriggerCompiler:
                 if cooldown is not None: trigger_a["cooldown"] = int(cooldown)
                 if chance is not None: trigger_a["chance"] = float(chance)
                 if condition_str: trigger_a["condition"] = condition_str
-                
+
                 # B. 建立後置事件 Trigger
                 combat_event = event if event in cls.COMBAT_EVENTS else "on_hit"
                 trigger_b = {
@@ -231,14 +234,14 @@ class TriggerCompiler:
             shield_name = act.get("shield_name", "Shield")
             duration = cls._to_int(act.get("duration"), 3)
             target = act.get("target", "caster")
-            
-            flat = cls._to_float(act.get("flat_value"), 0.0)
+
+            flat = cls._safe_flat_value(act, action_type)
             stat = cls._clean_stat(act.get("scaling_stat"))
             dice = act.get("dice")
             if dice:
                 dice = str(dice).strip()
             divisor = cls._to_float(act.get("divisor"), 1.0)
-            
+
             con_mult = act.get("con_multiplier")
             if stat is None and con_mult is not None:
                 stat = "CON"
@@ -251,7 +254,7 @@ class TriggerCompiler:
                     mult = cls._to_float(raw_mult, 0.0)
                 else:
                     mult = 1.0 if stat else 0.0
-            
+
             compiled = [
                 {
                     "action_type": "apply_status",
@@ -274,7 +277,7 @@ class TriggerCompiler:
         # A. inflict_damage
         elif action_type == "inflict_damage":
             target = act.get("target", "target")
-            flat = cls._to_float(act.get("flat_value"), 0.0)
+            flat = cls._safe_flat_value(act, action_type)
             stat = cls._clean_stat(act.get("scaling_stat"))
             raw_mult = act.get("value_multiplier") or act.get("multiplier")
             if raw_mult is not None:
@@ -285,7 +288,7 @@ class TriggerCompiler:
             if dice:
                 dice = str(dice).strip()
             divisor = cls._to_float(act.get("divisor"), 1.0)
-            
+
             compiled = [{
                 "action_type": "inflict_damage",
                 "target": target,
@@ -300,7 +303,7 @@ class TriggerCompiler:
         # B. gain_shield
         elif action_type == "gain_shield":
             target = act.get("target", "caster")
-            flat = cls._to_float(act.get("flat_value"), 0.0)
+            flat = cls._safe_flat_value(act, action_type)
             stat = cls._clean_stat(act.get("scaling_stat"))
             raw_mult = act.get("value_multiplier") or act.get("multiplier")
             if raw_mult is not None:
@@ -325,7 +328,7 @@ class TriggerCompiler:
         # C. heal
         elif action_type == "heal":
             target = act.get("target", "caster")
-            flat = cls._to_float(act.get("flat_value"), 0.0)
+            flat = cls._safe_flat_value(act, action_type)
             stat = cls._clean_stat(act.get("scaling_stat"))
             raw_mult = act.get("value_multiplier") or act.get("multiplier")
             if raw_mult is not None:
@@ -352,13 +355,23 @@ class TriggerCompiler:
             }]
 
         # D. apply_status
+        # 注意：act.get("action_type") 讀取的是原始值（apply_status 或 apply_debuff）
+        # apply_debuff 已在頂部轉為 apply_status，但 act 字典的原始值不變
+        # 因此：原始為 apply_debuff 的 → target 預設 "target"（對敵）
+        #        原始為 apply_status 的 → target 預設 "caster"（自身增益）
         elif action_type == "apply_status":
-            target = act.get("target", "caster" if act.get("action_type") == "apply_status" else "target")
+            original_action_type = act.get("action_type", "apply_status")
+            if original_action_type == "apply_debuff":
+                default_target = "target"
+            else:
+                default_target = "caster"
+            target = act.get("target", default_target)
+
             status_name = act.get("status_name") or act.get("debuff_name")
             if not status_name:
                 return []
             duration = cls._to_int(act.get("duration"), 1)
-            
+
             bonuses = {}
             bonuses_raw = act.get("bonuses") or act.get("stat_bonuses")
             if isinstance(bonuses_raw, dict):
@@ -435,6 +448,32 @@ class TriggerCompiler:
         return compiled
 
     # --- 輔助清洗工具方法 ---
+
+    @classmethod
+    def _safe_flat_value(cls, act: Dict[str, Any], action_type: str) -> float:
+        """
+        讀取 flat_value 並在值為非數字字串時發出警告。
+        常見錯誤：AI 把骰子語法（如 "1d20"）寫進 flat_value。
+        正確做法：骰子應放在獨立的 "dice" 欄位，flat_value 必須是純數字。
+        """
+        raw = act.get("flat_value", 0.0)
+        if isinstance(raw, str):
+            stripped = raw.strip()
+            is_dice_like = bool(re.match(r'^\d+d\d+', stripped, re.IGNORECASE))
+            is_non_numeric = not stripped.replace('.', '', 1).replace('-', '', 1).isdigit()
+            if is_dice_like:
+                logger.warning(
+                    "[TriggerCompiler] flat_value contains dice syntax %r (action: %s). "
+                    "Use the separate 'dice' field instead. flat_value reset to 0.0.",
+                    raw, action_type
+                )
+            elif is_non_numeric:
+                logger.warning(
+                    "[TriggerCompiler] flat_value is non-numeric %r (action: %s), reset to 0.0.",
+                    raw, action_type
+                )
+        return cls._to_float(raw, 0.0)
+
     @classmethod
     def _to_float(cls, val: Any, default: float = 0.0) -> float:
         if val is None:
@@ -473,9 +512,9 @@ class TriggerCompiler:
             val_str = str(val).strip().replace("x", "").replace("X", "")
             if "%" in val_str:
                 return float(val_str.replace("%", ""))
-            
+
             num = float(val_str)
-            # 如果是 0.0 到 1.0 之間的小數（包含 1.0），轉成百分比（即乘以 100）
+            # 0.0~1.0 fraction treated as percent (multiply by 100)
             if 0.0 < num <= 1.0:
                 return num * 100.0
             return num
