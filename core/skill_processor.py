@@ -134,14 +134,18 @@ def get_entity_combat_stat(entity, stat_name: str, default: Any = 0) -> Any:
     return default
 
 def add_entity_status_effect(
-    entity, 
-    name: str, 
-    description: str, 
-    duration: int, 
-    bonuses: dict = None, 
+    entity,
+    name: str,
+    description: str,
+    duration: int,
+    bonuses: dict = None,
     executable_triggers: list = None,
     max_stacks: int = 5,
-    trigger_limit: int = 0
+    trigger_limit: int = 0,
+    dot_damage_flat: float = 0.0,
+    dot_scaling_stat: str = None,
+    dot_multiplier: float = 0.0,
+    dot_damage_type: str = "true_damage",
 ):
     # 檢查是否為 Mock 且沒有 data
     if is_mock(entity) and not hasattr(entity, "data"):
@@ -188,7 +192,11 @@ def add_entity_status_effect(
         stacks=1,
         max_stacks=max_stacks,
         trigger_limit=trigger_limit,
-        trigger_count=0
+        trigger_count=0,
+        dot_damage_flat=dot_damage_flat,
+        dot_scaling_stat=dot_scaling_stat,
+        dot_multiplier=dot_multiplier,
+        dot_damage_type=dot_damage_type,
     )
     if hasattr(entity, "data"):
         data = entity.data
@@ -500,11 +508,10 @@ class SkillExecutionPipeline:
                 final_value *= 3.0
                 logs.append("🎯 觸發【處決】：目標生命值低於 20%，傷害乘以 3 倍！")
                 
-        # Sunder (破甲)：目標物理防禦力降低 30%，持續 3 回合
+        # Sunder (破甲)：目標物理防禦力降低 30%（百分比乘法模式），持續 3 回合
         if "Sunder" in keywords:
-            sunder_def = int(get_entity_combat_stat(target, "p_def", 10) * 0.30)
-            add_entity_status_effect(target, "Sunder", "物理防禦降低30%", 3, {"p_def": -sunder_def})
-            logs.append(f"🛡️ 觸發【破甲】：目標物理防禦降低 {sunder_def} (30%)。")
+            add_entity_status_effect(target, "Sunder", "物理防禦降低30%", 3, {"p_def": -0.30})
+            logs.append(f"🛡️ 觸發【破甲】：目標物理防禦降低 30%。")
             
         # Keyword: Wall_Break (碎垣)
         if "Wall_Break" in keywords:
@@ -698,11 +705,13 @@ class SkillExecutionPipeline:
             control_flags["slow_active"] = True
             logs.append(f"❄️ 施加【減速】給 {cls._get_name(target)}：閃避歸零且出手順序墊底。")
         if "Burn" in keywords:
-            add_entity_status_effect(target, "Burn", "灼燒 DoT", 3)
-            logs.append(f"🔥 施加【灼燒】給 {cls._get_name(target)}，回合結束扣除固定生命。")
+            add_entity_status_effect(target, "Burn", "灼燒 DoT", 3,
+                                     dot_damage_flat=15.0, dot_damage_type="true_damage")
+            logs.append(f"🔥 施加【灼燒】給 {cls._get_name(target)}，每回合造成 15 點真實傷害。")
         if "Frostbite" in keywords:
-            add_entity_status_effect(target, "Frostbite", "凍傷", 3)
-            logs.append(f"🥶 施加【凍傷】給 {cls._get_name(target)}，持續 3 回合. ")
+            add_entity_status_effect(target, "Frostbite", "凍傷", 3,
+                                     dot_damage_flat=8.0, dot_damage_type="true_damage")
+            logs.append(f"🥶 施加【凍傷】給 {cls._get_name(target)}，每回合造成 8 點真實傷害，持續 3 回合。")
         if "Blind" in keywords:
             add_entity_status_effect(target, "Blind", "盲目", 2)
             logs.append(f"🕶️ 施加【盲目】給 {cls._get_name(target)}，持續 2 回合。")

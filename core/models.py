@@ -35,10 +35,15 @@ class StatusEffect(BaseModel):
     start_date: Optional[str] = None                  # 針對天數制：開始日期 (YYYY-MM-DD)
     bonuses: Dict[str, float] = Field(default_factory=dict)
     executable_triggers: List[Dict[str, Any]] = Field(default_factory=list)
-    stacks: int = 1                                   # 新增：當前層數
-    max_stacks: int = 5                               # 新增：最大堆疊上限
-    trigger_limit: int = 0                            # 新增：最大觸發次數 (0 代表無限制)
-    trigger_count: int = 0                            # 新增：已觸發次數
+    stacks: int = 1                                   # 當前層數
+    max_stacks: int = 5                               # 最大堆疊上限
+    trigger_limit: int = 0                            # 最大觸發次數 (0 代表無限制)
+    trigger_count: int = 0                            # 已觸發次數
+    # --- DoT 傷害欄位（施加時算好，tick 直接讀取）---
+    dot_damage_flat: float = 0.0                      # 每 tick 固定傷害值
+    dot_scaling_stat: Optional[str] = None            # 縮放屬性 e.g. "STR"/"INT"
+    dot_multiplier: float = 0.0                       # 縮放倍率
+    dot_damage_type: Literal["physical", "magical", "true_damage"] = "true_damage"  # 傷害類型
 
 class BuildingSchema(BaseModel):
     id: str

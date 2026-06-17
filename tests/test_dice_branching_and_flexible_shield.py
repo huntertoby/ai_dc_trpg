@@ -174,19 +174,19 @@ class TestDiceBranchingAndFlexibleShield(unittest.IsolatedAsyncioTestCase):
         weapon.executable_triggers = [
             {
                 "event": "on_turn_start",
-                "dice_roll": "1d2",
+                "branch_roll": "1d2",
                 "actions": [
                     {
                         "action_type": "apply_status",
                         "status_name": "狂暴",
                         "duration": 2,
-                        "dice_range": [2, 2],
+                        "branch_when": [2, 2],
                         "target": "caster"
                     },
                     {
                         "action_type": "inflict_damage",
                         "flat_value": 10.0,
-                        "dice_range": [1, 1],
+                        "branch_when": [1, 1],
                         "target": "caster"
                     }
                 ]

@@ -108,7 +108,7 @@ class TriggerCompiler:
             # 3. 讀取 Trigger 級別屬性
             cooldown = trigger_raw.get("cooldown")
             chance = trigger_raw.get("chance")
-            dice_roll_str = trigger_raw.get("dice_roll")
+            dice_roll_str = trigger_raw.get("branch_roll")
             if dice_roll_str:
                 dice_roll_str = str(dice_roll_str).strip()
 
@@ -176,7 +176,7 @@ class TriggerCompiler:
                 if health_threshold is not None: trigger_b["health_threshold"] = float(health_threshold)
                 if target_health_below is not None: trigger_b["target_health_below"] = float(target_health_below)
                 if target_health_above is not None: trigger_b["target_health_above"] = float(target_health_above)
-                if dice_roll_str: trigger_b["dice_roll"] = dice_roll_str
+                if dice_roll_str: trigger_b["branch_roll"] = dice_roll_str
 
                 compiled_triggers.append(trigger_a)
                 compiled_triggers.append(trigger_b)
@@ -188,7 +188,7 @@ class TriggerCompiler:
                 if cooldown is not None: t["cooldown"] = int(cooldown)
                 if chance is not None: t["chance"] = float(chance)
                 if condition_str: t["condition"] = condition_str
-                if dice_roll_str: t["dice_roll"] = dice_roll_str
+                if dice_roll_str: t["branch_roll"] = dice_roll_str
                 compiled_triggers.append(t)
 
             # 情境三：只有普通戰鬥行為
@@ -201,7 +201,7 @@ class TriggerCompiler:
                 if health_threshold is not None: t["health_threshold"] = float(health_threshold)
                 if target_health_below is not None: t["target_health_below"] = float(target_health_below)
                 if target_health_above is not None: t["target_health_above"] = float(target_health_above)
-                if dice_roll_str: t["dice_roll"] = dice_roll_str
+                if dice_roll_str: t["branch_roll"] = dice_roll_str
                 compiled_triggers.append(t)
 
         return compiled_triggers
@@ -380,13 +380,27 @@ class TriggerCompiler:
                     if clean_k:
                         bonuses[clean_k] = cls._to_float(v, 0.0)
 
-            compiled = [{
+            dot_flat = cls._to_float(act.get("dot_damage_flat"), 0.0)
+            dot_stat = cls._clean_stat(act.get("dot_scaling_stat"))
+            dot_mult = cls._to_float(act.get("dot_multiplier"), 0.0)
+            dot_dtype = act.get("dot_damage_type", "true_damage")
+            if dot_dtype not in ("physical", "magical", "true_damage"):
+                dot_dtype = "true_damage"
+
+            entry = {
                 "action_type": "apply_status",
                 "target": target,
                 "status_name": status_name,
                 "duration": duration,
-                "bonuses": bonuses
-            }]
+                "bonuses": bonuses,
+            }
+            if dot_flat > 0 or (dot_stat and dot_mult > 0):
+                entry["dot_damage_flat"] = dot_flat
+                entry["dot_scaling_stat"] = dot_stat
+                entry["dot_multiplier"] = dot_mult
+                entry["dot_damage_type"] = dot_dtype
+
+            compiled = [entry]
 
         # E. remove_status
         elif action_type == "remove_status":
@@ -414,7 +428,7 @@ class TriggerCompiler:
         # G. modify_dice
         elif action_type == "modify_dice":
             param = act.get("param")
-            if param not in ("floor_value", "roll_modifier"):
+            if param not in ("floor_value", "roll_modifier", "reroll_threshold"):
                 return []
             val = cls._to_int(act.get("param_value"), 0)
             compiled = [{
@@ -426,9 +440,16 @@ class TriggerCompiler:
         # H. set_value
         elif action_type == "set_value":
             param = act.get("param")
-            if param not in ("damage_multiplier", "defense_ignore_ratio"):
+            if param not in ("damage_multiplier", "defense_ignore_ratio", "is_absolute_hit", "is_crit"):
                 return []
-            val = cls._to_float(act.get("param_value"), 1.0)
+            if param in ("is_absolute_hit", "is_crit"):
+                raw_val = act.get("param_value")
+                if isinstance(raw_val, str):
+                    val = raw_val.lower().strip() in ("true", "1", "yes")
+                else:
+                    val = bool(raw_val)
+            else:
+                val = cls._to_float(act.get("param_value"), 1.0)
             compiled = [{
                 "action_type": "set_value",
                 "param": param,
@@ -436,12 +457,12 @@ class TriggerCompiler:
             }]
 
         # Append dice_range if present
-        dice_range = act.get("dice_range")
+        dice_range = act.get("branch_when")
         if isinstance(dice_range, list) and len(dice_range) == 2:
             try:
                 dice_range = [int(dice_range[0]), int(dice_range[1])]
                 for item in compiled:
-                    item["dice_range"] = dice_range
+                    item["branch_when"] = dice_range
             except (ValueError, TypeError):
                 pass
 

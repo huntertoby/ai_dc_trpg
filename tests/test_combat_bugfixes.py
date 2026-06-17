@@ -59,7 +59,7 @@ class TestCombatBugfixes(unittest.IsolatedAsyncioTestCase):
     async def test_status_tick_logs_prepending(self, mock_random, mock_randint):
         cm = CombatManager(self.mock_char, self.monsters)
         # Apply Burn status to player
-        self.mock_char.data.status_effects.append(StatusEffect(name="Burn", description="灼燒", duration=3))
+        self.mock_char.data.status_effects.append(StatusEffect(name="Burn", description="灼燒", duration=3, dot_damage_flat=10.0))
         
         # Advance turn which should tick the player's status
         cm.turn_order = [

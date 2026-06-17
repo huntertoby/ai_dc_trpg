@@ -105,7 +105,7 @@ class TestCombatKeywords(unittest.IsolatedAsyncioTestCase):
         player_schema = self.char_schema
         
         # 施加 Burn 狀態
-        player_schema.status_effects.append(StatusEffect(name="Burn", duration=3))
+        player_schema.status_effects.append(StatusEffect(name="Burn", duration=3, dot_damage_flat=11.0))
         # 設置護盾與生命
         player_schema.vitality.temp_hp = 5
         player_schema.vitality.hp = 100

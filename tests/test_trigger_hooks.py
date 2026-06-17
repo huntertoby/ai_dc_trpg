@@ -546,8 +546,8 @@ class TestTriggerHooks(unittest.IsolatedAsyncioTestCase):
         # 將玩家生命值調到 35%，怪物打玩家 10 點傷害，使玩家生命值變為 25% (低於 30%)
         self.char.data.vitality.hp = 35
         
-        # 攻擊力設為 10 點，防禦設為 0
-        self.monsters[0]["attack"] = 10
+        # 攻擊力設為 12 點 (考慮新版 1d20 骰子縮放與防禦下限 1)，防禦設為 0
+        self.monsters[0]["attack"] = 12
         self.char.combat_stats["p_def"] = 0
         
         with patch("random.randint", return_value=1):
@@ -667,7 +667,7 @@ class TestTriggerHooks(unittest.IsolatedAsyncioTestCase):
         
         self.monsters[0]["hp"] = 100
         self.monsters[0]["speed"] = 1
-        self.monsters[0]["attack"] = 10
+        self.monsters[0]["attack"] = 12
         self.char.combat_stats["p_def"] = 0
         self.char.combat_stats["evasion_rate"] = 0.0
         
@@ -726,13 +726,13 @@ class TestTriggerHooks(unittest.IsolatedAsyncioTestCase):
         # 正常 m_roll = 10。由於「硬殼」狀態在怪物身上，怪物的 on_dice 將 roll_modifier 設為 -15
         # 10 - 15 = -5 點。
         # m_roll_mult = 0.5 + (-5 * 0.05) = 0.25。
-        # 威力 = 10 * 0.25 = 2.5。
-        # 減傷前 2.5 * 1.0 = 2.5。韌性 0.9 -> 2.25。傷害 int 截斷後為 2。
+        # 威力 = 12 * 0.25 = 3.0。
+        # 減傷前 (3.0 - 1.0) * 1.0 = 2.0 (防禦下限為 1)。韌性 0.9 -> 1.8。傷害 int 截斷後為 1。
         with patch("random.randint", return_value=10):
             res = await cm.monster_action()
             self.assertTrue(res["success"])
-        # 驗證傷害是 2，所以玩家 hp 變為 95 - 2 = 93。
-        self.assertEqual(self.char.data.vitality.hp, 93)
+        # 驗證傷害是 1，所以玩家 hp 變為 95 - 1 = 94。
+        self.assertEqual(self.char.data.vitality.hp, 94)
         
         # 情況 E：怪物在「硬殼」下受傷時，應該觸發 on_damaged 移除「硬殼」狀態
         # 玩家進行攻擊，怪物受傷

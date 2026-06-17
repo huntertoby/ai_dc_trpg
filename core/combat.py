@@ -119,20 +119,39 @@ class CombatManager:
         if is_player:
             c_stats = self.character.combat_stats
             base_def = c_stats["p_def"] if damage_type == "physical" else c_stats["m_def"]
-            return max(0, int(base_def))
+            return max(1, int(base_def))
         else:
+            # 【乘法防禦：怪物防禦】
             base_def = entity.get("defense", 0) if damage_type == "physical" else entity.get("m_defense", 0)
-            status_def_bonus = 0
             stat_key = "p_def" if damage_type == "physical" else "m_def"
             alt_key = "defense" if damage_type == "physical" else "m_defense"
             effects = entity.get("status_effects", [])
+
+            # 分離絕對加成與百分比乘數
+            absolute_bonus = 0
+            multiplier = 1.0
+
             for effect in effects:
                 bonuses = effect.bonuses if hasattr(effect, "bonuses") else effect.get("bonuses", {})
+                value = None
+
                 if stat_key in bonuses:
-                    status_def_bonus += bonuses[stat_key]
+                    value = bonuses[stat_key]
                 elif alt_key in bonuses:
-                    status_def_bonus += bonuses[alt_key]
-            return max(0, int(base_def + status_def_bonus))
+                    value = bonuses[alt_key]
+
+                if value is not None:
+                    # 檢查是否為百分比（-1 < value < 0）
+                    if isinstance(value, (int, float)) and -1 < value < 0:
+                        # 百分比減益
+                        multiplier *= (1 + value)
+                    else:
+                        # 絕對值加成
+                        absolute_bonus += value
+
+            # 計算最終防禦：(base + absolute) * multiplier，永不為 0
+            final_def = (base_def + absolute_bonus) * multiplier
+            return max(1, int(final_def))
 
     def _get_entity_evasion(self, entity, is_player: bool) -> float:
         if is_player:
@@ -177,48 +196,84 @@ class CombatManager:
                 entity["status_effects"] = remaining
         return expired
 
+    # DoT 狀態設定表：status_name -> (emoji, 顯示名稱)
+    # 傷害完全由 StatusEffect.dot_damage_flat 決定，0 = 純 debuff 不扣血
+    _DOT_STATUS_CONFIG = {
+        "Burn":      ("🔥", "灼燒"),
+        "Frostbite": ("🥶", "凍傷"),
+        "Bleed":     ("🩸", "流血"),
+        "Poison":    ("☠️", "中毒"),
+    }
+
+    def _apply_dot_damage(self, entity_ref, is_player: bool, dmg: int, emoji: str, label: str, logs: list):
+        """通用護盾→HP 扣血邏輯，寫入 logs。"""
+        if is_player:
+            temp_hp = self.character.data.vitality.temp_hp
+            if temp_hp > 0:
+                absorbed = min(temp_hp, dmg)
+                self.character.data.vitality.temp_hp -= absorbed
+                dmg -= absorbed
+                if dmg == 0:
+                    logs.append(f"{emoji} {self.character.data.name} 受到{label} DoT {absorbed} 點傷害，被護盾完全吸收！")
+                else:
+                    logs.append(f"{emoji} {self.character.data.name} 受到{label} DoT 傷害，護盾破裂吸收了 {absorbed} 點！")
+            if dmg > 0:
+                self.character.data.vitality.hp = max(0, self.character.data.vitality.hp - dmg)
+                logs.append(f"{emoji} {self.character.data.name} 受到{label} DoT，扣除 {dmg} 點生命值！")
+            self.character.save()
+        else:
+            name = entity_ref.get("name", "未知單位")
+            temp_hp = entity_ref.get("temp_hp", 0)
+            if temp_hp > 0:
+                absorbed = min(temp_hp, dmg)
+                entity_ref["temp_hp"] -= absorbed
+                dmg -= absorbed
+                if dmg == 0:
+                    logs.append(f"{emoji} {name} 受到{label} DoT {absorbed} 點傷害，被護盾完全吸收！")
+                else:
+                    logs.append(f"{emoji} {name} 受到{label} DoT 傷害，護盾破裂吸收了 {absorbed} 點！")
+            if dmg > 0:
+                entity_ref["hp"] = max(0, entity_ref["hp"] - dmg)
+                logs.append(f"{emoji} {name} 受到{label} DoT，扣除 {dmg} 點生命值！")
+
+    def _get_status_effect_obj(self, entity_ref, is_player: bool, status_name: str):
+        """取得 StatusEffect 物件（player 用 pydantic，monster 用 dict）。"""
+        if is_player:
+            effects = self.character.data.status_effects or []
+            return next((e for e in effects if e.name == status_name), None)
+        else:
+            for e in entity_ref.get("status_effects", []):
+                n = e.name if hasattr(e, "name") else e.get("name")
+                if n == status_name:
+                    return e
+            return None
+
     def _process_entity_status_tick(self, entity_ref, is_player: bool) -> tuple[bool, Optional[str]]:
         name = self.character.data.name if is_player else entity_ref.get("name", "未知單位")
         logs = []
         skip_turn = False
-        
-        # 1. 結算 Burn (灼燒) DoT 傷害
-        if self._has_status(entity_ref, is_player, "Burn"):
-            level = self.character.data.level if is_player else entity_ref.get("level", 1)
-            burn_dmg = 10 + level
-            
-            if is_player:
-                temp_hp = self.character.data.vitality.temp_hp
-                if temp_hp > 0:
-                    if temp_hp >= burn_dmg:
-                        self.character.data.vitality.temp_hp -= burn_dmg
-                        logs.append(f"🔥 {name} 受到灼燒 DoT {burn_dmg} 點傷害，被護盾完全吸收！")
-                        burn_dmg = 0
-                    else:
-                        burn_dmg -= temp_hp
-                        self.character.data.vitality.temp_hp = 0
-                        logs.append(f"🔥 {name} 受到灼燒 DoT 傷害，護盾破裂吸收了 {temp_hp} 點！")
-                
-                if burn_dmg > 0:
-                    self.character.data.vitality.hp = max(0, self.character.data.vitality.hp - burn_dmg)
-                    logs.append(f"🔥 {name} 受到灼燒 DoT，扣除 {burn_dmg} 點生命值！")
-                self.character.save()
+
+        # 1. 結算所有 DoT 狀態傷害（資料驅動）
+        for status_name, (emoji, label) in self._DOT_STATUS_CONFIG.items():
+            if not self._has_status(entity_ref, is_player, status_name):
+                continue
+
+            # 從 StatusEffect 讀取施加時已計算好的 dot_damage_flat
+            effect_obj = self._get_status_effect_obj(entity_ref, is_player, status_name)
+            if effect_obj is not None:
+                stored_flat = (
+                    effect_obj.dot_damage_flat
+                    if hasattr(effect_obj, "dot_damage_flat")
+                    else effect_obj.get("dot_damage_flat", 0.0)
+                )
+                dot_dmg = int(round(stored_flat))  # 0 = 純 debuff，不扣血
             else:
-                temp_hp = entity_ref.get("temp_hp", 0)
-                if temp_hp > 0:
-                    if temp_hp >= burn_dmg:
-                        entity_ref["temp_hp"] -= burn_dmg
-                        logs.append(f"🔥 {name} 受到灼燒 DoT {burn_dmg} 點傷害，被護盾完全吸收！")
-                        burn_dmg = 0
-                    else:
-                        burn_dmg -= temp_hp
-                        entity_ref["temp_hp"] = 0
-                        logs.append(f"🔥 {name} 受到灼燒 DoT 傷害，護盾破裂吸收了 {temp_hp} 點！")
-                
-                if burn_dmg > 0:
-                    entity_ref["hp"] = max(0, entity_ref["hp"] - burn_dmg)
-                    logs.append(f"🔥 {name} 受到灼燒 DoT，扣除 {burn_dmg} 點生命值！")
-            
+                dot_dmg = 0  # 找不到 effect obj，不做假設
+
+            if dot_dmg > 0:
+                self._apply_dot_damage(entity_ref, is_player, dot_dmg, emoji, label, logs)
+
+        if logs:
             self._check_battle_status()
             if self.is_finished:
                 return True, "\n".join(logs)

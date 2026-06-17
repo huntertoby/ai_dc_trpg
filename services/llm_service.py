@@ -13,7 +13,8 @@ class LMStudioClient:
                   system_prompt: Optional[str] = None,
                   temperature: float = 0.7,
                   max_tokens: int = 16384,
-                  response_schema: Optional[dict] = None) -> str:
+                  response_schema: Optional[dict] = None,
+                  enable_thinking: bool = True) -> str:
         messages = self._build_messages(prompt, system_prompt)
 
         kwargs: Dict = dict(
@@ -25,14 +26,27 @@ class LMStudioClient:
         if response_schema:
             kwargs["response_format"] = response_schema
 
+        # Qwen3 thinking 控制：
+        # enable_thinking=False → 關掉 reasoning（適合規則遵從型任務，如 Stage 1 JSON 填格）
+        # enable_thinking=True  → 保留 reasoning（適合創意型任務，如 Stage 2 故事生成）
+        if not enable_thinking:
+            kwargs["extra_body"] = {"chat_template_kwargs": {"enable_thinking": False}}
+
         try:
             response = await self.client.chat.completions.create(**kwargs)
             msg = response.choices[0].message
             # Qwen3 / thinking models put the final answer in reasoning_content
             # when response_format is set; content is empty in that case.
+            # The OpenAI SDK stores unknown fields in msg.model_extra, not as direct attributes.
             content = msg.content
             if not content:
-                content = getattr(msg, "reasoning_content", None) or ""
+                # 1. 直接屬性（部分 SDK 版本）
+                reasoning = getattr(msg, "reasoning_content", None)
+                # 2. model_extra（標準 SDK 對未知欄位的存放位置）
+                if reasoning is None:
+                    model_extra = getattr(msg, "model_extra", None) or {}
+                    reasoning = model_extra.get("reasoning_content")
+                content = reasoning or ""
             return content
         except Exception as e:
             return f"Error calling LM Studio: {str(e)}"

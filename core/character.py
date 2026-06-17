@@ -323,6 +323,54 @@ class Character:
             self.save()
         return leveled_up
 
+    @staticmethod
+    def apply_defense_multipliers(base_def: float, effects: list) -> int:
+        """
+        規範化防禦乘法堆疊。
+
+        計算流程：
+        1. 分離絕對加成和百分比乘數
+        2. 排序百分比乘數以確保浮點精度一致性
+        3. 先計算 (base_def + absolute_bonuses) * 乘法堆疊
+        4. 確保結果永不為 0（下限為 1）
+
+        參數：
+        - base_def: 基礎防禦值
+        - effects: 狀態效果列表，每個包含 bonuses dict
+
+        返回值：最終防禦值（整數，≥1）
+
+        例子：
+        - base 100, -20% → 100 * 0.8 = 80
+        - base 100, 5×-20% → 100 * 0.8^5 ≈ 33
+        """
+        absolute_bonus = 0.0
+        multipliers = []
+
+        # 遍歷所有狀態效果，分類加成類型
+        for effect in effects:
+            bonuses = effect.bonuses if hasattr(effect, "bonuses") else effect.get("bonuses", {})
+            for stat, value in bonuses.items():
+                if stat in ["p_def", "m_def"]:
+                    # 檢查是否為百分比（-1 < value < 0）或絕對值
+                    if isinstance(value, (int, float)) and -1 < value < 0:
+                        # 百分比減益，記錄乘數
+                        multipliers.append(1 + value)
+                    else:
+                        # 絕對值加成
+                        absolute_bonus += float(value)
+
+        # 規範化乘數順序（排序確保一致性）
+        multipliers.sort()
+
+        # 計算：先加上絕對加成，再乘以百分比乘數
+        result = base_def + absolute_bonus
+        for mult in multipliers:
+            result *= mult
+
+        # 確保防禦永不為 0
+        return max(1, int(result))
+
     @property
     def combat_stats(self) -> dict:
         ts = self.total_stats
@@ -332,18 +380,49 @@ class Character:
         status_bonuses = {}
         for effect in self.data.status_effects:
             for stat, val in effect.bonuses.items():
+                if stat in ["p_def", "m_def"] and isinstance(val, (int, float)) and -1 < val < 0:
+                    continue
                 status_bonuses[stat] = status_bonuses.get(stat, 0.0) + val
                 
         def get_bonus(name: str) -> float:
             return bonuses.get(name, 0.0) + status_bonuses.get(name, 0.0)
         
-        # 衍生雙防計算 (由屬性加權 + 等級保底得出)
+        # 衍生雙防計算 (由屬性加權 + 等級保底得出，使用乘法堆疊模式)
         lvl_bonus = self.data.level // 2
-        
-        # 物理防禦：體質核心(0.7) + 力量(0.2) + 敏捷(0.1) + 等級加成 + 裝備/狀態直接加成
-        p_def = (ts["CON"] * 0.7) + (ts["STR"] * 0.2) + (ts["DEX"] * 0.1) + lvl_bonus + get_bonus("p_def")
-        # 魔法防禦：感知核心(0.7) + 體質韌性(0.2) + 智力(0.1) + 等級加成 + 裝備/狀態直接加成
-        m_def = (ts["WIS"] * 0.7) + (ts["CON"] * 0.2) + (ts["INT"] * 0.1) + lvl_bonus + get_bonus("m_def")
+ 
+        # 【乘法防禦：物理防禦】
+        # 基礎 = 屬性 + 等級 + 裝備直接加成（絕對值）
+        base_p_def = (ts["CON"] * 0.7) + (ts["STR"] * 0.2) + (ts["DEX"] * 0.1) + lvl_bonus
+        # 加上裝備與狀態的直接加成（絕對值）
+        equipment_p_def_bonus = bonuses.get("p_def", 0.0)
+        status_p_def_bonus = status_bonuses.get("p_def", 0.0)
+        base_p_def += equipment_p_def_bonus + status_p_def_bonus
+ 
+        # 狀態效果的百分比乘法：只有在 -1 < value < 0 時才視為百分比
+        p_def_multiplier = 1.0
+        for effect in self.data.status_effects:
+            if "p_def" in effect.bonuses:
+                val = effect.bonuses["p_def"]
+                if isinstance(val, (int, float)) and -1 < val < 0:
+                    # 百分比減益
+                    p_def_multiplier *= (1 + val)
+ 
+        p_def = max(1, int(base_p_def * p_def_multiplier))
+ 
+        # 【乘法防禦：魔法防禦】
+        base_m_def = (ts["WIS"] * 0.7) + (ts["CON"] * 0.2) + (ts["INT"] * 0.1) + lvl_bonus
+        equipment_m_def_bonus = bonuses.get("m_def", 0.0)
+        status_m_def_bonus = status_bonuses.get("m_def", 0.0)
+        base_m_def += equipment_m_def_bonus + status_m_def_bonus
+ 
+        m_def_multiplier = 1.0
+        for effect in self.data.status_effects:
+            if "m_def" in effect.bonuses:
+                val = effect.bonuses["m_def"]
+                if isinstance(val, (int, float)) and -1 < val < 0:
+                    m_def_multiplier *= (1 + val)
+ 
+        m_def = max(1, int(base_m_def * m_def_multiplier))
         
         main_off = max(ts["DEX"], ts["INT"], ts["WIS"])
         

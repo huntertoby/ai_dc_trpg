@@ -472,7 +472,7 @@ class TriggerEngine:
                 
                 # Branching logic: If the trigger specifies a dice_roll, we roll it first.
                 trigger_dice_val = None
-                dice_roll_str = trigger.get("dice_roll")
+                dice_roll_str = trigger.get("branch_roll")
                 if dice_roll_str:
                     from core.skill_processor import SkillProcessor
                     trigger_dice_val = SkillProcessor.roll_dice(dice_roll_str)
@@ -490,7 +490,7 @@ class TriggerEngine:
                         continue
                     
                     # Check dice range constraint if dice_range is defined
-                    dice_range = action.get("dice_range")
+                    dice_range = action.get("branch_when")
                     if dice_range:
                         if trigger_dice_val is None or not (dice_range[0] <= trigger_dice_val <= dice_range[1]):
                             continue
@@ -650,16 +650,27 @@ class TriggerEngine:
                             status_bonuses = action.get("bonuses", {})
                             max_stacks = action.get("max_stacks", 5)
                             trigger_limit = action.get("trigger_limit", 0)
+                            # --- DoT 欄位：施加時以施加者屬性計算最終值存入 ---
+                            dot_flat = float(action.get("dot_damage_flat", 0.0))
+                            dot_stat = action.get("dot_scaling_stat")
+                            dot_mult = float(action.get("dot_multiplier", 0.0))
+                            dot_dtype = action.get("dot_damage_type", "true_damage")
+                            if dot_stat and dot_mult:
+                                dot_flat += get_entity_stat(caster, dot_stat) * dot_mult
                             if status_name:
                                 add_entity_status_effect(
-                                    action_target, 
-                                    status_name, 
-                                    f"由觸發效果施加的{status_name}", 
-                                    duration, 
-                                    bonuses=status_bonuses, 
+                                    action_target,
+                                    status_name,
+                                    f"由觸發效果施加的{status_name}",
+                                    duration,
+                                    bonuses=status_bonuses,
                                     executable_triggers=status_triggers,
                                     max_stacks=max_stacks,
-                                    trigger_limit=trigger_limit
+                                    trigger_limit=trigger_limit,
+                                    dot_damage_flat=dot_flat,
+                                    dot_scaling_stat=None,   # 已解算，不再存 stat
+                                    dot_multiplier=0.0,
+                                    dot_damage_type=dot_dtype,
                                 )
                                 target_name = TriggerEngine._get_name(action_target)
                                 log_msg = f"✨ 觸發效果：施加狀態【{status_name}】給 {target_name}，持續 {duration} 回合。"
