@@ -4,11 +4,47 @@ import asyncio
 from typing import Optional, List
 import discord
 
-from core.models import CharacterSchema, Skill, Equipment
+from core.models import CharacterSchema, Skill, Equipment, Item
 from core.character import Character
 from core.constants import BASE_JOBS, BASE_RACES, SKILL_KEYWORDS, STAT_TRANSLATIONS
 from core.skill_processor import SkillProcessor
 from utils.json_utils import repair_and_parse_json
+
+
+def create_equipment_token(tier: str = "T5", level: int = 1, quantity: int = 3, theme: str = "新手套裝卷") -> Item:
+    theme_suffix = f" ({theme})" if theme else ""
+    return Item(
+        name=f"{tier}裝備製造幣{theme_suffix} (Lv.{level})",
+        description=f"可以用於在主城「萬物熔爐」製造/兌換 {tier} 等級 {level} 的裝備。",
+        quantity=quantity,
+        item_type="crafting_token",
+        material_type="equipment",
+        tier=tier,
+        source_id=str(level)
+    )
+
+
+def create_skill_token(tier: str = "T5", quantity: int = 3, theme: str = "新手技能卷") -> Item:
+    # 根據等階決定使用門檻等級
+    level_req = {
+        "T5": 1,
+        "T4": 20,
+        "T3": 40,
+        "T2": 60,
+        "T1": 80
+    }.get(tier, 1)
+    
+    theme_suffix = f" ({theme})" if theme else ""
+    return Item(
+        name=f"{tier}技能製造幣{theme_suffix}",
+        description=f"可以用於在主城「真理高塔」學習/兌換 {tier} 等級技能（使用門檻：Lv.{level_req}）。",
+        quantity=quantity,
+        item_type="crafting_token",
+        material_type="skill",
+        tier=tier,
+        source_id=str(level_req)
+    )
+
 
 
 def parse_bonus_points(text: str) -> dict:
@@ -30,9 +66,6 @@ def parse_bonus_points(text: str) -> dict:
                 distribution[m_val] = distribution.get(m_val, 0) + int(val)
                 break
     return distribution
-
-
-from core.skill_generator import generate_starter_skills
 
 
 async def generate_starter_gear(char_name: str, base_jobs: List[str], llm_client) -> List[Equipment]:
@@ -108,25 +141,19 @@ async def generate_character_json(description: str, llm_client, user_id: str, na
         parsed_data["character_id"] = user_id
         if name: parsed_data["name"] = name
 
-        # 2. 第二步：獨立請求生成技能
-        valid_skills = await generate_starter_skills(parsed_data, llm_client)
-        
-        # 4. 生成初始裝備
-        starter_gear = await generate_starter_gear(parsed_data["name"], parsed_data["base_jobs"], llm_client)
+        # 2. 初始技能與裝備改為空，並改為發放代幣
+        valid_skills = []
         
         # 5. 裝載數據並實例化角色
         schema_data = CharacterSchema(**parsed_data)
         schema_data.abilities = valid_skills
-        schema_data.inventory.extend(starter_gear)
+        schema_data.inventory = []
         
         char = Character(schema_data, user_id)
-
-        # 6. 自動穿上初始裝備
-        for item in starter_gear:
-            try:
-                char.equip_item(item.name)
-            except Exception as e:
-                print(f"自動穿戴初始裝備失敗: {item.name} - {e}")
+        
+        # 6. 加入初始製造幣
+        char.add_item(create_equipment_token("T5", 1, 3))
+        char.add_item(create_skill_token("T5", 3))
         
         # 7. 確保角色以全滿狀態誕生
         char.heal_all()
@@ -260,14 +287,14 @@ class ConfirmCharacterView(discord.ui.View):
         return True
 
     def _get_preview_embeds(self) -> List[discord.Embed]:
-        from ui.embeds import build_character_embed, build_skills_embed
+        from ui.embeds import build_character_embed, build_inventory_embed
         char_embed = build_character_embed(self.character_data, self.user)
         char_embed.title = f"📝 [設定預覽] {char_embed.title}"
         
-        skill_embed = build_skills_embed(self.character_data, self.user)
-        skill_embed.set_footer(text="❓ 請問這個設定符合你的期待嗎？ (確認後角色將正式誕生)")
+        inv_embed = build_inventory_embed(self.character_data, self.user)
+        inv_embed.set_footer(text="❓ 請問這個設定符合你的期待嗎？ (確認後角色將正式誕生，並獲得製造幣，可至主城進行兌換)")
         
-        return [char_embed, skill_embed]
+        return [char_embed, inv_embed]
 
     @discord.ui.button(label="確認設定", style=discord.ButtonStyle.green)
     async def confirm_button(self, interaction: discord.Interaction, button: discord.ui.Button):
@@ -280,24 +307,6 @@ class ConfirmCharacterView(discord.ui.View):
             view=None
         )
         self.stop()
-
-    @discord.ui.button(label="重試技能", style=discord.ButtonStyle.secondary)
-    async def retry_skills(self, interaction: discord.Interaction, button: discord.ui.Button):
-        """僅重新生成技能"""
-        # 使用 defer 避免互動過期
-        await interaction.response.defer(ephemeral=True)
-        await interaction.edit_original_response(content="🔄 正在重新構思技能，請稍候...", embeds=[], view=None)
-        
-        # 重新呼叫統一的技能生成函式
-        valid_skills = await generate_starter_skills(self.character_data.data.model_dump(), self.llm_client)
-        
-        # 更新並存檔
-        self.character_data.data.abilities = valid_skills
-        self.character_data.heal_all()  # 確保重試技能後血量也是滿的
-        self.character_data.save()
-        
-        # 刷新預覽 (使用 edit_original_response 確保穩定)
-        await interaction.edit_original_response(content=None, embeds=self._get_preview_embeds(), view=self)
 
     @discord.ui.button(label="重新生成", style=discord.ButtonStyle.red)
     async def cancel_button(self, interaction: discord.Interaction, button: discord.ui.Button):

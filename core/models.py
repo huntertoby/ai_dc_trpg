@@ -1,5 +1,5 @@
 from pydantic import BaseModel, Field, model_validator
-from typing import List, Optional, Dict, Union, Literal, Any
+from typing import List, Optional, Dict, Union, Literal, Any, Annotated
 from core.constants import RANK_ORDER
 
 class Item(BaseModel):
@@ -20,12 +20,31 @@ class Equipment(Item):
     special_effect: str = ""                         # 特殊描述/技能預留位
     bonuses: Dict[str, float] = Field(default_factory=dict)
     executable_triggers: List[Dict[str, Any]] = Field(default_factory=list)
+    tags: List[str] = Field(default_factory=list)      # 標籤系統
+    allowed_jobs: List[str] = Field(default_factory=list) # 允許使用職業限制
     
     # --- 戰鬥系統擴充 ---
     weapon_type: Optional[str] = None                # 'sword', 'bow', 'staff', 'dagger', etc.
     damage_type: Literal["physical", "magical"] = "physical"
     scaling_stat: Literal["STR", "DEX", "INT", "WIS", "CHA", "CON"] = "STR"
     # ------------------
+
+    @model_validator(mode='after')
+    def register_custom_aliases(self) -> 'Equipment':
+        for trigger in getattr(self, "executable_triggers", []) or []:
+            if isinstance(trigger, dict):
+                for action in trigger.get("actions", []) or []:
+                    if isinstance(action, dict):
+                        custom_name = action.get("custom_status_name")
+                        canonical = action.get("canonical_status")
+                        if custom_name and canonical:
+                            from core.constants import STATUS_REGISTRY
+                            if canonical in STATUS_REGISTRY:
+                                aliases = STATUS_REGISTRY[canonical]["aliases"]
+                                if custom_name not in aliases:
+                                    aliases.append(custom_name)
+                                    print(f"🔄 [Pydantic] 動態註冊狀態別名恢復：將「{custom_name}」關聯至「{canonical}」")
+        return self
 
 class StatusEffect(BaseModel):
     name: str
@@ -44,6 +63,36 @@ class StatusEffect(BaseModel):
     dot_scaling_stat: Optional[str] = None            # 縮放屬性 e.g. "STR"/"INT"
     dot_multiplier: float = 0.0                       # 縮放倍率
     dot_damage_type: Literal["physical", "magical", "true_damage"] = "true_damage"  # 傷害類型
+    tags: List[str] = Field(default_factory=list)
+    extra_data: Dict[str, Any] = Field(default_factory=dict)
+    custom_status_name: Optional[str] = None          # 自訂狀態別名
+    canonical_status: Optional[str] = None            # 規格狀態名
+
+    @model_validator(mode='after')
+    def register_custom_aliases(self) -> 'StatusEffect':
+        custom_name = getattr(self, "custom_status_name", None)
+        canonical = getattr(self, "canonical_status", None)
+        if custom_name and canonical:
+            from core.constants import STATUS_REGISTRY
+            if canonical in STATUS_REGISTRY:
+                aliases = STATUS_REGISTRY[canonical]["aliases"]
+                if custom_name not in aliases:
+                    aliases.append(custom_name)
+                    print(f"🔄 [Pydantic] 動態註冊狀態別名恢復：將「{custom_name}」關聯至「{canonical}」")
+        for trigger in getattr(self, "executable_triggers", []) or []:
+            if isinstance(trigger, dict):
+                for action in trigger.get("actions", []) or []:
+                    if isinstance(action, dict):
+                        c_name = action.get("custom_status_name")
+                        canon = action.get("canonical_status")
+                        if c_name and canon:
+                            from core.constants import STATUS_REGISTRY
+                            if canon in STATUS_REGISTRY:
+                                aliases = STATUS_REGISTRY[canon]["aliases"]
+                                if c_name not in aliases:
+                                    aliases.append(c_name)
+                                    print(f"🔄 [Pydantic] 動態註冊狀態別名恢復：將「{c_name}」關聯至「{canon}」")
+        return self
 
 class BuildingSchema(BaseModel):
     id: str
@@ -171,18 +220,103 @@ class SkillFormula(BaseModel):
 class SkillMechanics(BaseModel):
     action_type: Literal["damage", "heal", "buff", "debuff"] = "damage" # 技能行為類型
     target_type: Literal["single", "aoe", "self", "allies"] = "single" # 技能目標類型
-    cost: Dict[str, int] = Field(default_factory=dict)
+    cost: Dict[str, Union[int, str]] = Field(default_factory=dict)
     formula: SkillFormula = Field(default_factory=SkillFormula)
-    keywords: List[str] = [] 
-    custom_logic: str = ""   
+    actions: List[Dict[str, Any]] = Field(default_factory=list)
     narrative_effect: str = "" 
+    tags: List[str] = Field(default_factory=list)      # 技能標籤系統
+    # --- 新增：T1 組件化拼圖系統 ---
+    targeting_modifier: Optional[str] = None          # e.g., "chain", "lowest_hp", "random_3"
+    synergy_requirement: Optional[str] = None         # e.g., "requires_burn", "consumes_shields"
+    execution_mode: Literal["immediate", "delayed", "stance_switch", "channeled", "reactive"] = "immediate"
+
+    @model_validator(mode='before')
+    @classmethod
+    def convert_legacy_keywords(cls, data: Any) -> Any:
+        if isinstance(data, dict):
+            kws = data.pop("keywords", []) or []
+            lk = data.pop("legendary_keyword", None)
+            actions = data.get("actions", []) or []
+            
+            if not actions and (kws or lk):
+                from core.skill_templates import assemble_skill_actions
+                choices = []
+                for kw in kws:
+                    clean_kw = kw.replace("'", "").replace("-", "_").replace(" ", "_").lower()
+                    choices.append({"template_id": f"active_{clean_kw}"})
+                if lk:
+                    clean_lk = lk.replace("'", "").replace("-", "_").replace(" ", "_").lower()
+                    choices.append({"template_id": f"active_{clean_lk}"})
+                data["actions"] = assemble_skill_actions(choices)
+        return data
+
+    @property
+    def keywords(self) -> List[str]:
+        # 從 actions 中還原 keywords，確保舊有測試與代碼能無縫讀取
+        kws = []
+        for act in self.actions:
+            if act.get("action_type") == "call_special_mechanic":
+                kw = act.get("keyword_name")
+                if kw:
+                    kws.append(kw)
+            elif act.get("action_type") == "apply_status":
+                status = act.get("status_name")
+                if status:
+                    kws.append(status)
+        return list(dict.fromkeys(kws))
+
+    @property
+    def legendary_keyword(self) -> Optional[str]:
+        # 從 actions 中還原傳說詞條名稱
+        legendaries = {
+            "Annihilate", "Soul_Drain", "Blood_Pact", "Devil's_Roll", "Last_Rites", 
+            "Resonance_Break", "Paradox", "Doom_Seal", "Void_Rift", "Eternal_Wound", 
+            "Abyssal_Mark", "Fate_Seal", "Soul_Shatter", "Time_Warp",
+            "Phoenix_Rebirth", "Fate_Swap", "Mind_Control", "Apocalypse"
+        }
+        for act in self.actions:
+            if act.get("action_type") == "call_special_mechanic":
+                kw = act.get("keyword_name")
+                if kw in legendaries:
+                    return kw
+        return None
 
 class Skill(BaseModel):
     name: str
     description: str
     tier: Literal["T1", "T2", "T3", "T4", "T5"] = "T5" # 技能階級 (T5 為最基礎)
-    mechanics: SkillMechanics
+    skill_type: Literal["active", "passive"] = "active"
+    allowed_jobs: List[str] = Field(default_factory=list) # 允許使用職業限制
+    mechanics: Optional[SkillMechanics] = None
+    bonuses: Dict[str, float] = Field(default_factory=dict)
     executable_triggers: List[Dict[str, Any]] = Field(default_factory=list)
+    # --- 新增：技能成長與進化系統 ---
+    usage_count: int = 0
+    evolution_threshold: int = 0      # 0 代表不可進化
+    can_evolve: bool = False          # 達成次數後標示為可進化
+    evolution_tier: int = 0           # 紀錄進化了幾次
+
+    @model_validator(mode='after')
+    def register_custom_aliases(self) -> 'Skill':
+        mechanics = getattr(self, "mechanics", None)
+        if mechanics:
+            for action in getattr(mechanics, "actions", []):
+                custom_name = action.get("custom_status_name")
+                canonical = action.get("canonical_status")
+                if custom_name and canonical:
+                    from core.constants import STATUS_REGISTRY
+                    if canonical in STATUS_REGISTRY:
+                        aliases = STATUS_REGISTRY[canonical]["aliases"]
+                        if custom_name not in aliases:
+                            aliases.append(custom_name)
+                            print(f"🔄 [Pydantic] 動態註冊狀態別名恢復：將「{custom_name}」關聯至「{canonical}」")
+        return self
+
+class ActiveSkill(Skill):
+    skill_type: Literal["active"] = "active"
+
+class PassiveSkill(Skill):
+    skill_type: Literal["passive"] = "passive"
 
 class LogEntry(BaseModel):
     date: str                  # YYYY-MM-DD
@@ -200,6 +334,8 @@ class CharacterSchema(BaseModel):
     exp: int = 0
     gold: int = 0
     background: str
+    row: str = "front"                                          # 戰位：front (前排) 或 back (後排)
+    resistances: Dict[str, float] = Field(default_factory=dict) # 元素抗性：fire, cold, shadow 等
     primary_stats: PrimaryAttributes = Field(default_factory=PrimaryAttributes)
     equipment_slots: EquipmentSlots = Field(default_factory=EquipmentSlots)
     bonus_points_spent: int = 0

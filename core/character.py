@@ -158,6 +158,12 @@ class Character:
         if not found_item:
             raise ValueError(f"背包裡找不到可裝備的物品: {item_name}")
 
+        # 檢查裝備職業限制
+        allowed_jobs = getattr(found_item, "allowed_jobs", []) or []
+        if allowed_jobs:
+            if not any(job in self.data.base_jobs for job in allowed_jobs):
+                raise ValueError(f"裝備限制：此物品限定職業 【{', '.join(allowed_jobs)}】，你不符合穿戴要求。")
+
         slot = found_item.slot_type
         # 處理戒指動態槽位對應 (ring -> ring_1 / ring_2)
         if slot == "ring":
@@ -220,11 +226,6 @@ class Character:
         self.data.status_effects.append(StatusEffect(name=name, description=description, duration=duration))
         self.save()
 
-    def tick_status_effects(self):
-        for effect in self.data.status_effects:
-            effect.duration -= 1
-        self.data.status_effects = [e for e in self.data.status_effects if e.duration > 0]
-        self.save()
 
     def add_bonus_points(self, distribution: dict):
         """分配屬性點"""
@@ -254,6 +255,13 @@ class Character:
             if eq_item and isinstance(eq_item, Equipment):
                 for stat, value in eq_item.bonuses.items():
                     total[stat] = total.get(stat, 0) + value
+        
+        # 累加被動技能加成
+        for ability in self.data.abilities:
+            if getattr(ability, "skill_type", "active") == "passive":
+                bonuses = getattr(ability, "bonuses", {}) or {}
+                for stat, value in bonuses.items():
+                    total[stat] = total.get(stat, 0) + value
         return total
 
     def update_vitality(self, hp=None, mp=None, sanity=None, stamina=None, temp_hp=None):
@@ -262,7 +270,14 @@ class Character:
         """
         v = self.data.vitality
         if hp is not None:
-            v.hp = max(0, min(int(hp), self.max_hp))
+            from core.combat_utils import has_status, remove_status
+            val = int(hp)
+            if val <= 0 and has_status(self, "Phoenix_Rebirth"):
+                remove_status(self, "Phoenix_Rebirth")
+                v.hp = int(self.max_hp * 0.5)
+                v.mp = int(self.max_mp * 0.5)
+            else:
+                v.hp = max(0, min(val, self.max_hp))
         if mp is not None:
             v.mp = max(0, min(int(mp), self.max_mp))
         if sanity is not None:

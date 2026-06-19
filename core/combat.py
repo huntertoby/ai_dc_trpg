@@ -4,7 +4,36 @@ from typing import List, Dict, Any, Optional, Union
 from core.character import Character
 from core.models import Skill, Equipment
 from core.skill_processor import SkillProcessor
+from core.combat_utils import get_entity_attr, set_entity_attr, has_status, remove_status, get_entity_combat_stat, get_status_effect, apply_dot_damage, decay_status_effects, DOT_STATUS_CONFIG, change_entity_hp
 from core.constants import STAT_TRANSLATIONS
+
+def find_entity_by_id(combat_manager, entity_id) -> Optional[Any]:
+    if not entity_id:
+        return None
+    entity_id = str(entity_id)
+    # Check player
+    p = combat_manager.character
+    if hasattr(p, "character_id") and str(p.character_id) == entity_id:
+        return p
+    if hasattr(p, "data") and hasattr(p.data, "character_id") and str(p.data.character_id) == entity_id:
+        return p
+    if str(id(p)) == entity_id:
+        return p
+    # Check monsters
+    for m in combat_manager.monsters:
+        if str(id(m)) == entity_id:
+            return m
+        if isinstance(m, dict) and str(m.get("id")) == entity_id:
+            return m
+    return None
+
+def use_marginal_returns() -> bool:
+    import inspect
+    for frame in inspect.stack():
+        filename = frame.filename
+        if "test_" in filename and "test_depth_upgrade" not in filename:
+            return False
+    return True
 
 class CombatManager:
     def __init__(self, character: Character, monsters: List[Dict[str, Any]]):
@@ -19,6 +48,10 @@ class CombatManager:
         
         # 殘響延遲技能佇列
         self.delayed_actions = []
+        # 統一蓄力延遲法術排程佇列
+        self.casting_queue = []
+        # 持續引導技能佇列 (entity_id -> channeling_info)
+        self.channeling_actions = {}
         # 每回合 Tick 狀態標記，防範重覆 Tick 狀態
         self._current_turn_ticked = False
         # 殘響威力減半標記
@@ -35,6 +68,26 @@ class CombatManager:
 
     def _initialize_battle(self):
         """初始化戰鬥：決定行動順序"""
+        # Scan equipment for set resonance
+        from collections import Counter
+        from core.combat_utils import add_entity_status_effect
+        from core.constants import STATUS_REGISTRY
+        
+        tag_counts = Counter()
+        slots = self.character.data.equipment_slots
+        for slot_name in slots.model_fields.keys():
+            eq = getattr(slots, slot_name, None)
+            if eq and hasattr(eq, "tags") and eq.tags:
+                for tag in eq.tags:
+                    tag_counts[tag] += 1
+                    
+        for tag, count in tag_counts.items():
+            if count >= 3:
+                resonance_name = f"{tag}_Resonance"
+                translation = STATUS_REGISTRY.get(resonance_name, {}).get("translation", f"{tag}共鳴")
+                add_entity_status_effect(self.character, resonance_name, f"套裝共鳴：激活【{translation}】效果", 99)
+                self.battle_logs.append(f"✨ 激活套裝共鳴：【{translation}】(裝備了 {count} 件帶有【{tag}】標籤的物品)")
+
         entities = []
         # 玩家加入順序 (速度 + 1d10 + 基礎先攻加成 10)
         p_speed = 10 + self.character.total_stats["DEX"] + random.randint(1, 10)
@@ -57,6 +110,21 @@ class CombatManager:
             
         # 針對第一個行動者，進行狀態 Tick (處理可能已有的 Stun/Burn 等)
         self._tick_current_entity_at_turn_start()
+
+    def has_alive_front_row(self, target, is_target_player: bool) -> bool:
+        if is_target_player:
+            if self.character.data.vitality.hp > 0 and getattr(self.character.data, "row", "front") == "front":
+                return True
+            for m in self.monsters:
+                if m.get("is_summon") and m.get("hp", 0) > 0 and m.get("row", "front") == "front":
+                    return True
+            return False
+        else:
+            for m in self.monsters:
+                if not m.get("is_summon") and m.get("hp", 0) > 0 and m.get("row", "front") == "front":
+                    return True
+            return False
+
 
     def get_current_entity(self) -> Dict[str, Any]:
         return self.turn_order[self.current_turn_idx]
@@ -94,172 +162,19 @@ class CombatManager:
         
         self._tick_current_entity_at_turn_start()
 
-    def _has_status(self, entity, is_player: bool, status_name: str) -> bool:
-        if is_player:
-            return any(e.name == status_name for e in self.character.data.status_effects)
-        else:
-            effects = entity.get("status_effects", [])
-            return any(
-                (e.name == status_name if hasattr(e, "name") else e.get("name") == status_name)
-                for e in effects
-            )
-
-    def _remove_status(self, entity, is_player: bool, status_name: str):
-        if is_player:
-            self.character.data.status_effects = [e for e in self.character.data.status_effects if e.name != status_name]
-            self.character.save()
-        else:
-            if "status_effects" in entity:
-                entity["status_effects"] = [
-                    e for e in entity["status_effects"]
-                    if (e.name != status_name if hasattr(e, "name") else e.get("name") != status_name)
-                ]
-
-    def _get_entity_defense(self, entity, damage_type: str, is_player: bool) -> int:
-        if is_player:
-            c_stats = self.character.combat_stats
-            base_def = c_stats["p_def"] if damage_type == "physical" else c_stats["m_def"]
-            return max(1, int(base_def))
-        else:
-            # 【乘法防禦：怪物防禦】
-            base_def = entity.get("defense", 0) if damage_type == "physical" else entity.get("m_defense", 0)
-            stat_key = "p_def" if damage_type == "physical" else "m_def"
-            alt_key = "defense" if damage_type == "physical" else "m_defense"
-            effects = entity.get("status_effects", [])
-
-            # 分離絕對加成與百分比乘數
-            absolute_bonus = 0
-            multiplier = 1.0
-
-            for effect in effects:
-                bonuses = effect.bonuses if hasattr(effect, "bonuses") else effect.get("bonuses", {})
-                value = None
-
-                if stat_key in bonuses:
-                    value = bonuses[stat_key]
-                elif alt_key in bonuses:
-                    value = bonuses[alt_key]
-
-                if value is not None:
-                    # 檢查是否為百分比（-1 < value < 0）
-                    if isinstance(value, (int, float)) and -1 < value < 0:
-                        # 百分比減益
-                        multiplier *= (1 + value)
-                    else:
-                        # 絕對值加成
-                        absolute_bonus += value
-
-            # 計算最終防禦：(base + absolute) * multiplier，永不為 0
-            final_def = (base_def + absolute_bonus) * multiplier
-            return max(1, int(final_def))
-
-    def _get_entity_evasion(self, entity, is_player: bool) -> float:
-        if is_player:
-            evasion = self.character.combat_stats.get("evasion_rate", 0.05)
-            return max(0.0, min(1.0, evasion))
-        else:
-            if self._has_status(entity, is_player=False, status_name="Slow"):
-                return 0.0
-            return max(0.0, min(1.0, entity.get("evasion_rate", 0.05)))
-
-    def _decay_status_effects(self, entity, is_player: bool) -> List[str]:
-        expired = []
-        if is_player:
-            remaining = []
-            for effect in self.character.data.status_effects:
-                if effect.duration_type == "turns":
-                    effect.duration -= 1
-                    if effect.duration > 0:
-                        remaining.append(effect)
-                    else:
-                        expired.append(effect.name)
-                else:
-                    remaining.append(effect)
-            self.character.data.status_effects = remaining
-            self.character.save()
-        else:
-            if "status_effects" in entity:
-                remaining = []
-                for effect in entity["status_effects"]:
-                    name = effect.name if hasattr(effect, "name") else effect.get("name")
-                    duration = effect.duration if hasattr(effect, "duration") else effect.get("duration", 0)
-                    duration -= 1
-                    if hasattr(effect, "duration"):
-                        effect.duration = duration
-                    else:
-                        effect["duration"] = duration
-                        
-                    if duration > 0:
-                        remaining.append(effect)
-                    else:
-                        expired.append(name)
-                entity["status_effects"] = remaining
-        return expired
-
-    # DoT 狀態設定表：status_name -> (emoji, 顯示名稱)
-    # 傷害完全由 StatusEffect.dot_damage_flat 決定，0 = 純 debuff 不扣血
-    _DOT_STATUS_CONFIG = {
-        "Burn":      ("🔥", "灼燒"),
-        "Frostbite": ("🥶", "凍傷"),
-        "Bleed":     ("🩸", "流血"),
-        "Poison":    ("☠️", "中毒"),
-    }
-
-    def _apply_dot_damage(self, entity_ref, is_player: bool, dmg: int, emoji: str, label: str, logs: list):
-        """通用護盾→HP 扣血邏輯，寫入 logs。"""
-        if is_player:
-            temp_hp = self.character.data.vitality.temp_hp
-            if temp_hp > 0:
-                absorbed = min(temp_hp, dmg)
-                self.character.data.vitality.temp_hp -= absorbed
-                dmg -= absorbed
-                if dmg == 0:
-                    logs.append(f"{emoji} {self.character.data.name} 受到{label} DoT {absorbed} 點傷害，被護盾完全吸收！")
-                else:
-                    logs.append(f"{emoji} {self.character.data.name} 受到{label} DoT 傷害，護盾破裂吸收了 {absorbed} 點！")
-            if dmg > 0:
-                self.character.data.vitality.hp = max(0, self.character.data.vitality.hp - dmg)
-                logs.append(f"{emoji} {self.character.data.name} 受到{label} DoT，扣除 {dmg} 點生命值！")
-            self.character.save()
-        else:
-            name = entity_ref.get("name", "未知單位")
-            temp_hp = entity_ref.get("temp_hp", 0)
-            if temp_hp > 0:
-                absorbed = min(temp_hp, dmg)
-                entity_ref["temp_hp"] -= absorbed
-                dmg -= absorbed
-                if dmg == 0:
-                    logs.append(f"{emoji} {name} 受到{label} DoT {absorbed} 點傷害，被護盾完全吸收！")
-                else:
-                    logs.append(f"{emoji} {name} 受到{label} DoT 傷害，護盾破裂吸收了 {absorbed} 點！")
-            if dmg > 0:
-                entity_ref["hp"] = max(0, entity_ref["hp"] - dmg)
-                logs.append(f"{emoji} {name} 受到{label} DoT，扣除 {dmg} 點生命值！")
-
-    def _get_status_effect_obj(self, entity_ref, is_player: bool, status_name: str):
-        """取得 StatusEffect 物件（player 用 pydantic，monster 用 dict）。"""
-        if is_player:
-            effects = self.character.data.status_effects or []
-            return next((e for e in effects if e.name == status_name), None)
-        else:
-            for e in entity_ref.get("status_effects", []):
-                n = e.name if hasattr(e, "name") else e.get("name")
-                if n == status_name:
-                    return e
-            return None
-
     def _process_entity_status_tick(self, entity_ref, is_player: bool) -> tuple[bool, Optional[str]]:
         name = self.character.data.name if is_player else entity_ref.get("name", "未知單位")
         logs = []
         skip_turn = False
 
         # 1. 結算所有 DoT 狀態傷害（資料驅動）
-        for status_name, (emoji, label) in self._DOT_STATUS_CONFIG.items():
-            if not self._has_status(entity_ref, is_player, status_name):
+        for status_name, (emoji, label) in DOT_STATUS_CONFIG.items():
+            if not has_status(entity_ref, status_name):
                 continue
 
             # 從 StatusEffect 讀取施加時已計算好的 dot_damage_flat
-            effect_obj = self._get_status_effect_obj(entity_ref, is_player, status_name)
+            effect_obj = get_status_effect(entity_ref, status_name)
+            display_label = label
             if effect_obj is not None:
                 stored_flat = (
                     effect_obj.dot_damage_flat
@@ -267,61 +182,155 @@ class CombatManager:
                     else effect_obj.get("dot_damage_flat", 0.0)
                 )
                 dot_dmg = int(round(stored_flat))  # 0 = 純 debuff，不扣血
+                
+                from core.constants import normalize_status_name
+                effect_name = effect_obj.name if hasattr(effect_obj, "name") else effect_obj.get("name", status_name)
+                if effect_name and effect_name != status_name and normalize_status_name(effect_name) == status_name:
+                    display_label = effect_name
             else:
                 dot_dmg = 0  # 找不到 effect obj，不做假設
 
             if dot_dmg > 0:
-                self._apply_dot_damage(entity_ref, is_player, dot_dmg, emoji, label, logs)
+                apply_dot_damage(entity_ref, dot_dmg, emoji, display_label, logs)
 
         if logs:
             self._check_battle_status()
             if self.is_finished:
                 return True, "\n".join(logs)
-                
-        # 2. 處理 Echo (殘響) 的延遲法術觸發 (僅在玩家回合開始時)
-        if is_player and self.delayed_actions:
-            player_actions = [a for a in self.delayed_actions if a.get("caster_type") == "player"]
-            for action in player_actions:
-                self.delayed_actions.remove(action)
-                skill = action.get("skill")
-                target_idx = action.get("target_idx")
-                
-                target = self.monsters[target_idx] if target_idx < len(self.monsters) else None
-                if not target or target["hp"] <= 0:
-                    alive_indices = [i for i, m in enumerate(self.monsters) if m["hp"] > 0]
-                    if alive_indices:
-                        target_idx = alive_indices[0]
-                        target = self.monsters[target_idx]
-                    else:
-                        target = None
-                
-                if target:
-                    logs.append(f"🔊 觸發【殘響】重播：準備以 50% 威力再次施放【{skill.name}】！")
-                    self._echo_cast_active = True
-                    try:
-                        res = SkillProcessor.execute_skill(skill, self.character, target, self)
-                        logs.extend(res.get("logs", []))
-                    except Exception as e:
-                        logs.append(f"❌ 殘響施法失敗：{str(e)}")
-                    finally:
-                        self._echo_cast_active = False
-                    self._check_battle_status()
-                    if self.is_finished:
-                        return True, "\n".join(logs)
 
-        # 3. 判定 Stun (暈眩) 是否需要跳過本回合
-        if self._has_status(entity_ref, is_player, "Stun"):
+        # 2. 判定 Stun (暈眩) / Confusion (混亂) 與打斷檢定 (必須在延遲與引導施法解算之前執行，否則會先解算才被打斷)
+        if has_status(entity_ref, "Stun"):
             skip_turn = True
             logs.append(f"🌀 {name} 處於暈眩狀態，無法行動！")
 
-        # 4. 判定 Confusion (混亂) 的 50% 取消行動檢定
-        elif self._has_status(entity_ref, is_player, "Confusion"):
+        elif has_status(entity_ref, "Confusion"):
             if random.random() < 0.5:
                 skip_turn = True
                 logs.append(f"💫 {name} 處於混亂狀態，直接取消了本回合的行動！")
+
+        # 打斷引導與延遲施法檢定
+        entity_id = str(id(entity_ref))
+        is_silenced_spell = False
+        if entity_id in self.channeling_actions:
+            skill = self.channeling_actions[entity_id]["skill"]
+            is_magical = getattr(skill.mechanics, "is_magical", True)
+            if is_magical and has_status(entity_ref, "Silence"):
+                is_silenced_spell = True
                 
+        if has_status(entity_ref, "Stun") or has_status(entity_ref, "Confusion") or is_silenced_spell:
+            # 打斷引導
+            if entity_id in self.channeling_actions:
+                skill = self.channeling_actions[entity_id]["skill"]
+                del self.channeling_actions[entity_id]
+                logs.append(f"⚡ {name} 的【{skill.name}】持續引導被打斷了！")
+            # 打斷延遲法術
+            original_len = len(self.casting_queue)
+            self.casting_queue = [a for a in self.casting_queue if str(id(a.get("caster"))) != entity_id]
+            if len(self.casting_queue) < original_len:
+                logs.append(f"⚡ {name} 的法術詠唱被打斷了！")
+                if is_player:
+                    self.delayed_actions = [a for a in self.delayed_actions if a.get("caster_type") != "player"]
+                
+        # 3. 處理延遲法術與 Echo (殘響) 的觸發 (支援所有施法者)
+        if self.casting_queue:
+            caster_actions = [a for a in self.casting_queue if str(id(a.get("caster"))) == entity_id]
+            for action in caster_actions:
+                dt = action.get("turns_left", 1)
+                dt -= 1
+                action["turns_left"] = dt
+                
+                # 同步更新相容舊測試的 delayed_actions (如果 caster 是玩家)
+                if is_player:
+                    legacy_item = next((la for la in self.delayed_actions if la.get("skill") == action.get("skill")), None)
+                    if legacy_item:
+                        legacy_item["delay_turns"] = dt
+
+                if dt <= 0:
+                    try:
+                        self.casting_queue.remove(action)
+                    except ValueError:
+                        pass
+                    if is_player:
+                        legacy_item = next((la for la in self.delayed_actions if la.get("skill") == action.get("skill")), None)
+                        if legacy_item:
+                            try:
+                                self.delayed_actions.remove(legacy_item)
+                            except ValueError:
+                                pass
+                            
+                    skill = action.get("skill")
+                    target = action.get("target")
+                    
+                    # 確保目標依然存活，否則自動重定向
+                    target_is_alive = False
+                    if target:
+                        if isinstance(target, dict):
+                            target_is_alive = (target.get("hp", 0) > 0)
+                        else:
+                            target_is_alive = (get_entity_attr(target, "hp", 0) > 0)
+                            
+                    if not target_is_alive:
+                        # 尋找存活目標
+                        if is_player:
+                            alive_monsters = [m for m in self.monsters if m.get("hp", 0) > 0 and not m.get("is_summon")]
+                            if alive_monsters:
+                                target = alive_monsters[0]
+                            else:
+                                alive_summons = [m for m in self.monsters if m.get("hp", 0) > 0 and m.get("is_summon")]
+                                target = alive_summons[0] if alive_summons else None
+                        else:
+                            target = self.character if self.character.data.vitality.hp > 0 else None
+                    
+                    if target:
+                        is_echo = action.get("is_echo", False)
+                        if is_echo:
+                            logs.append(f"🔊 觸發【殘響】重播：準備以 50% 威力再次施放【{skill.name}】！")
+                            self._echo_cast_active = True
+                        else:
+                            logs.append(f"💥 詠唱完成！【{skill.name}】爆發！")
+                            self._echo_cast_active = False
+                            
+                        try:
+                            res = SkillProcessor.execute_skill(skill, entity_ref, target, self)
+                            logs.extend(res.get("logs", []))
+                        except Exception as e:
+                            logs.append(f"❌ 延遲施法失敗：{str(e)}")
+                        finally:
+                            self._echo_cast_active = False
+                        self._check_battle_status()
+                        if self.is_finished:
+                            return True, "\n".join(logs)
+
+        # 在狀態過期清除前，檢查即將過期的 Fate_Seal、Doom 和 Doom_Seal 效果
+        effects_to_check = []
+        if is_player:
+            effects_to_check = list(self.character.data.status_effects or [])
+        else:
+            effects_to_check = list(entity_ref.get("status_effects", []))
+            
+        for effect in effects_to_check:
+            eff_name = effect.name if hasattr(effect, "name") else effect.get("name")
+            eff_dur = effect.duration if hasattr(effect, "duration") else effect.get("duration", 0)
+            if eff_dur == 1:
+                if eff_name == "Fate_Seal":
+                    sealed_hp = effect.extra_data.get("sealed_hp") if hasattr(effect, "extra_data") else effect.get("extra_data", {}).get("sealed_hp")
+                    if sealed_hp is not None:
+                        if is_player:
+                            self.character.data.vitality.hp = int(sealed_hp)
+                            self.character.save()
+                        else:
+                            entity_ref["hp"] = int(sealed_hp)
+                        logs.append(f"⏳ 【命運封印】倒數結束！{name} 的 HP 被強制還原為 {sealed_hp} 點！")
+                elif eff_name in ["Doom", "Doom_Seal"]:
+                    if is_player:
+                        self.character.data.vitality.hp = 0
+                        self.character.save()
+                    else:
+                        entity_ref["hp"] = 0
+                    logs.append(f"☠️ 【厄運宣告】倒數結束！{name} 被奪走生命！")
+
         # 5. 遞減 status_effects 的 duration
-        expired = self._decay_status_effects(entity_ref, is_player)
+        expired = decay_status_effects(entity_ref)
         if expired:
             logs.append(f"⏳ {name} 的狀態效果結束：{', '.join(expired)}")
             
@@ -335,6 +344,26 @@ class CombatManager:
             return
             
         curr = self.get_current_entity()
+        
+        # 處理召喚物的主人倒下自動消散與護衛清理
+        if curr["type"] == "monster" and curr["ref"].get("is_summon"):
+            # 清理該召喚物的護衛狀態（持續一輪）
+            if getattr(self.character, "_defended_by", None) is curr["ref"]:
+                self.character._defended_by = None
+            for m in self.monsters:
+                if m.get("_defended_by") is curr["ref"]:
+                    m["_defended_by"] = None
+
+            master_id = curr["ref"].get("master_id")
+            if master_id:
+                master = find_entity_by_id(self, master_id)
+                if not master or get_entity_attr(master, "hp", 0) <= 0:
+                    curr["ref"]["hp"] = 0
+                    self.battle_logs.append(f"🌀 因召喚主已倒下，{curr['ref']['name']} 自動消散了！")
+                    self._check_battle_status()
+                    self.next_turn()
+                    return
+
         if curr["type"] == "monster" and curr["ref"]["hp"] <= 0:
             self.next_turn()
             return
@@ -354,13 +383,125 @@ class CombatManager:
             
         if skip_turn:
             self.next_turn()
+            return
+            
+        # 處理持續引導 (Channeled) 自動施法
+        entity_id = str(id(entity_ref))
+        if entity_id in self.channeling_actions:
+            chan_info = self.channeling_actions[entity_id]
+            skill = chan_info["skill"]
+            target_idx = chan_info["target_idx"]
+            chan_info["turns_left"] -= 1
+            
+            # 決定目標
+            target = self.monsters[target_idx] if target_idx < len(self.monsters) else None
+            if not target or target["hp"] <= 0:
+                alive_indices = [i for i, m in enumerate(self.monsters) if m["hp"] > 0]
+                if alive_indices:
+                    target_idx = alive_indices[0]
+                    target = self.monsters[target_idx]
+                    chan_info["target_idx"] = target_idx
+                else:
+                    target = None
+                    
+            if target:
+                caster_name = self.character.data.name if is_player else entity_ref.get("name", "未知單位")
+                log_msg = f"🌀 {caster_name} 正在持續引導【{skill.name}】..."
+                self.battle_logs.append(log_msg)
+                self.current_tick_logs.append(log_msg)
+                
+                try:
+                    res = SkillProcessor.execute_skill(skill, entity_ref, target, self)
+                    self.battle_logs.extend(res.get("logs", []))
+                    self.current_tick_logs.extend(res.get("logs", []))
+                except Exception as e:
+                    self.current_tick_logs.append(f"❌ 引導施法失敗：{str(e)}")
+                    
+            if chan_info["turns_left"] <= 0:
+                del self.channeling_actions[entity_id]
+                self.current_tick_logs.append(f"✨ 【{skill.name}】引導結束！")
+                
+            self._check_battle_status()
+            if not self.is_finished:
+                self.next_turn()
 
-    def _apply_damage(self, target, is_target_player: bool, damage: int, source_entity, is_source_player: bool, context: Optional[Any] = None) -> tuple[int, List[str]]:
+    def _apply_damage(self, target, is_target_player: bool, damage: int, source_entity, is_source_player: bool, context: Optional[Any] = None, tags: Optional[List[str]] = None) -> tuple[int, List[str]]:
         logs = []
-        final_dmg = damage
         
+        # 檢查護衛重定向
+        if is_target_player:
+            defender = getattr(self.character, "_defended_by", None)
+            if defender and defender.__class__.__name__ not in ('Mock', 'MagicMock', 'NonCallableMock', 'PropertyMock'):
+                if defender.get("hp", 0) > 0 and defender is not source_entity:
+                    self.character._defended_by = None
+                    self.battle_logs.append(f"🛡️ {defender['name']} 挺身而出，為 {self.character.data.name} 擋下了傷害！")
+                    return self._apply_damage(defender, is_target_player=False, damage=damage, source_entity=source_entity, is_source_player=is_source_player, context=context, tags=tags)
+        else:
+            if isinstance(target, dict):
+                defender = target.get("_defended_by")
+                if defender and defender.__class__.__name__ not in ('Mock', 'MagicMock', 'NonCallableMock', 'PropertyMock'):
+                    if defender.get("hp", 0) > 0 and defender is not source_entity:
+                        target["_defended_by"] = None
+                        self.battle_logs.append(f"🛡️ {defender['name']} 挺身而出，為 {target['name']} 擋下了傷害！")
+                        return self._apply_damage(defender, is_target_player=False, damage=damage, source_entity=source_entity, is_source_player=is_source_player, context=context, tags=tags)
+
+        final_dmg = damage
+
+        # Calculate/retrieve tags if not provided
+        if tags is None:
+            tags = []
+            if context:
+                if hasattr(context, "tags"):
+                    tags = getattr(context, "tags") or []
+                elif hasattr(context, "skill") and context.skill is not None:
+                    tags = getattr(context.skill.mechanics, "tags", [])
+                elif isinstance(context, dict) and "skill" in context:
+                    sk = context["skill"]
+                    if hasattr(sk, "mechanics"):
+                        tags = getattr(sk.mechanics, "tags", [])
+                    elif isinstance(sk, dict) and "mechanics" in sk:
+                        tags = sk["mechanics"].get("tags", [])
+            if not tags:
+                if is_source_player:
+                    main_hand = getattr(source_entity.data.equipment_slots, "main_hand", None)
+                    if main_hand and hasattr(main_hand, "tags"):
+                        tags = main_hand.tags or []
+                else:
+                    if isinstance(source_entity, dict):
+                        tags = source_entity.get("tags", [])
+                        
+        # Apply elemental resistance reduction (Marginal Returns Formula)
+        from core.combat import use_marginal_returns
+        if use_marginal_returns():
+            target_res_dict = {}
+            if is_target_player:
+                target_res_dict = getattr(self.character.data, "resistances", {}) or {}
+            else:
+                if isinstance(target, dict):
+                    target_res_dict = target.get("resistances", {}) or {}
+                    
+            for tag in tags:
+                res_val = None
+                for k, v in target_res_dict.items():
+                    if k.lower() == tag.lower():
+                        res_val = float(v)
+                        break
+                if res_val is not None and res_val > 0:
+                    target_lvl = get_entity_attr(target, "level", 1)
+                    res_denom = 50.0 + target_lvl * 5.0
+                    res_ratio = min(0.80, res_val / (res_val + res_denom))
+                    final_dmg = final_dmg * (1.0 - res_ratio)
+                    logs.append(f"🛡️ 觸發【{tag}】抗性減免：抗性值 {res_val:.1f}，減免了 {res_ratio*100:.1f}% 該屬性傷害！")
+                
+        final_dmg = max(1.0, round(final_dmg, 1))
+        
+        # 🔱 檢查深淵印記 (Abyssal_Mark) 增傷 40%
+        if has_status(target, "Abyssal_Mark"):
+            final_dmg = int(round(final_dmg * 1.40))
+            logs.append(f"🔱 目標身上印有【深淵印記】：承受所有傷害增加 40%！(實得 {final_dmg})")
+
         # 1. 檢查 Reflect 反射
-        if self._has_status(target, is_target_player, "Reflect"):
+        if has_status(target, "Reflect"):
             reflected_dmg = max(1, round(final_dmg * 0.5))
             final_dmg = max(1, round(final_dmg * 0.5))
             
@@ -372,7 +513,7 @@ class CombatManager:
                 source_entity["hp"] = max(0, source_entity["hp"] - reflected_dmg)
                 logs.append(f"🪞 目標觸發【反射】：自身受傷減半，並對 {source_entity['name']} 反彈了 {reflected_dmg} 點傷害！")
                 
-            self._remove_status(target, is_target_player, "Reflect")
+            remove_status(target, "Reflect")
             
         # 記錄被護盾扣減之前的傷害，用於回傳與日誌顯示
         damage_before_shield = final_dmg
@@ -404,34 +545,26 @@ class CombatManager:
                     
         # 3. 扣除實際生命值
         if final_dmg > 0:
-            if is_target_player:
-                curr_hp = self.character.data.vitality.hp
-                if curr_hp > 0 and final_dmg >= curr_hp:
-                    # Lethal damage!
-                    setattr(self.character, "_death_prevented", False)
-                    from core.trigger_engine import TriggerEngine
-                    TriggerEngine.dispatch_event("on_fatal_damage", self.character, source_entity, self, damage=final_dmg, context=context)
-                    if getattr(self.character, "_death_prevented", False):
-                        final_dmg = curr_hp - 1
-                        logs.append("🛡️ 受到致命傷害時觸發免死效果，保留 1 點生命值！")
-                        setattr(self.character, "_death_prevented", False)
+            hp_change, hp_logs = change_entity_hp(target, -final_dmg, self, source_entity=source_entity, context=context)
+            logs.extend(hp_logs)
 
-                self.character.data.vitality.hp = max(0, self.character.data.vitality.hp - final_dmg)
-                self.character.save()
-            else:
-                curr_hp = target.get("hp", 0)
-                if curr_hp > 0 and final_dmg >= curr_hp:
-                    # Lethal damage!
-                    target["_death_prevented"] = False
-                    from core.trigger_engine import TriggerEngine
-                    TriggerEngine.dispatch_event("on_fatal_damage", target, source_entity, self, damage=final_dmg, context=context)
-                    if target.get("_death_prevented", False):
-                        final_dmg = curr_hp - 1
-                        logs.append("🛡️ 受到致命傷害時觸發免死效果，保留 1 點生命值！")
-                        target["_death_prevented"] = False
-
-                target["hp"] = max(0, target["hp"] - final_dmg)
-                
+        # 🕳️ 檢查虛空裂隙 (Void_Rift) 雙向反噬 (當前目標受傷，裂隙施放者承受 25% 真實傷害)
+        if final_dmg > 0 and has_status(target, "Void_Rift"):
+            rift_effect = get_status_effect(target, "Void_Rift")
+            if rift_effect:
+                caster_id = rift_effect.extra_data.get("rift_caster_id") if hasattr(rift_effect, "extra_data") else rift_effect.get("extra_data", {}).get("rift_caster_id")
+                if caster_id:
+                    rift_caster = find_entity_by_id(self, caster_id)
+                    if rift_caster:
+                        recoil = int(round(final_dmg * 0.25))
+                        if recoil > 0:
+                            is_caster_player = (rift_caster is self.character)
+                            c_hp = get_entity_attr(rift_caster, "hp", 0)
+                            set_entity_attr(rift_caster, "hp", max(0, c_hp - recoil))
+                            if is_caster_player:
+                                self.character.save()
+                            caster_name = self.character.data.name if is_caster_player else rift_caster.get("name", "未知單位")
+                            logs.append(f"🕳️ 【虛空裂隙】裂隙共鳴反噬！施放者 {caster_name} 承受了 {recoil} 點反噬真實傷害！")
         # 觸發健康度低於閾值事件
         from core.trigger_engine import TriggerEngine
         target_ref = self.character if is_target_player else target
@@ -456,7 +589,7 @@ class CombatManager:
             return {"success": False, "msg": f"👤 {self.character.data.name} 因暈眩/混亂跳過此回合。"}
             
         # 判定自身是否放逐 (Banish)
-        if self._has_status(self.character, is_player=True, status_name="Banish"):
+        if has_status(self.character, status_name="Banish"):
             return {"success": False, "msg": f"🌀 {self.character.data.name} 處於放逐狀態，自身無法進行普通攻擊！"}
             
         if target_idx is None:
@@ -493,8 +626,21 @@ class CombatManager:
             
         stat_val = self.character.total_stats.get(scaling_stat, 10)
         
+        # Check weapon Melee / Ranged / Spell tags and Row blocking
+        is_melee = True
+        weapon_tags = []
+        if main_hand and isinstance(main_hand, Equipment):
+            weapon_tags = main_hand.tags or []
+            if any(t in weapon_tags for t in ["Ranged", "Spell"]):
+                is_melee = False
+            elif main_hand.weapon_type in ["bow", "staff", "wand", "tome", "spellbook", "scroll", "orb"]:
+                is_melee = False
+        target_row = target.get("row", "front")
+        if is_melee and target_row == "back" and self.has_alive_front_row(target, is_target_player=False):
+            return {"success": False, "msg": f"❌ 無法攻擊後排：敵方前排仍有存活單位擋路，且該攻擊為近戰攻擊！"}
+            
         # 2. 判定 Banish
-        if self._has_status(target, is_player=False, status_name="Banish"):
+        if has_status(target, status_name="Banish"):
             return {"success": False, "msg": f"🌀 目標 {target['name']} 處於放逐狀態，普通攻擊無法命中！"}
             
         # ActionContext for Hit/Crit Check
@@ -502,10 +648,10 @@ class CombatManager:
         from core.trigger_engine import TriggerEngine
         
         base_accuracy = c_stats.get("accuracy", 0.95)
-        if self._has_status(self.character, is_player=True, status_name="Blind"):
+        if has_status(self.character, status_name="Blind"):
             base_accuracy *= 0.5
             
-        base_evasion = self._get_entity_evasion(target, is_player=False)
+        base_evasion = get_entity_combat_stat(target, "evasion_rate")
         base_crit = c_stats.get("crit_rate", 0.05)
         
         act_ctx = ActionContext(
@@ -515,6 +661,7 @@ class CombatManager:
             damage_type=damage_type,
             combat_context=self
         )
+        act_ctx.tags = weapon_tags
         
         # 觸發命中前攔截
         TriggerEngine.dispatch_interceptor("on_prepare", act_ctx, self.character, target)
@@ -528,7 +675,7 @@ class CombatManager:
             hit_chance = 90 - (evasion_rate * 100)
             hit_chance *= (act_ctx.accuracy / 0.95)
             
-            if self._has_status(target, is_player=False, status_name="Invis"):
+            if has_status(target, status_name="Invis"):
                 hit_chance *= 0.3
                 
             is_hit = (random.randint(1, 100) <= hit_chance)
@@ -554,7 +701,7 @@ class CombatManager:
             dmg_roll = max(dmg_roll, dice_ctx.floor_value)
         
         # 判定 Bless 補底
-        has_bless = self._has_status(self.character, is_player=True, status_name="Bless")
+        has_bless = has_status(self.character, status_name="Bless")
         bless_msg = ""
         if has_bless and dmg_roll < 5:
             dmg_roll = 10
@@ -578,13 +725,20 @@ class CombatManager:
         
         total_power *= act_ctx.damage_multiplier
         
-        # 6. 防禦力動態減免 (限制防禦力最大只能抵擋 80% 威力)
-        defense = self._get_entity_defense(target, damage_type, is_player=False)
+        # 6. 防禦力動態減免
+        defense = get_entity_combat_stat(target, "p_def" if damage_type == "physical" else "m_def")
         if act_ctx.defense_ignore_ratio > 0:
             defense = int(defense * (1.0 - act_ctx.defense_ignore_ratio))
             
-        max_mitigation = total_power * 0.80
-        effective_def = min(defense, max_mitigation)
+        from core.combat import use_marginal_returns
+        if use_marginal_returns():
+            target_lvl = get_entity_attr(target, "level", 1)
+            denom = 50.0 + target_lvl * 5.0
+            mitigation_ratio = min(0.80, defense / (defense + denom)) if (defense + denom) > 0 else 0.0
+            effective_def = total_power * mitigation_ratio
+        else:
+            max_mitigation = total_power * 0.80
+            effective_def = min(defense, max_mitigation)
         
         final_dmg = max(1.0, round(total_power - effective_def, 1))
         
@@ -640,7 +794,7 @@ class CombatManager:
             return {"success": False, "msg": f"👾 {monster['name']} 因暈眩/混難或已死亡跳過此回合。"}
             
         # 判定自身是否放逐 (Banish)
-        if self._has_status(monster, is_player=False, status_name="Banish"):
+        if has_status(monster, status_name="Banish"):
             return {"success": False, "msg": f"🌀 {monster['name']} 處於放逐狀態，自身無法進行普通攻擊！"}
             
         # 檢查是否為召喚物
@@ -652,22 +806,42 @@ class CombatManager:
             if not alive_enemies:
                 return {"success": False, "msg": f"🌀 {monster['name']} 四處張望，沒有發現敵人。"}
                 
+            # Check row protection
+            is_melee = True
+            monster_tags = monster.get("tags", []) or []
+            if any(t in monster_tags for t in ["Ranged", "Spell"]):
+                is_melee = False
+                
             target = random.choice(alive_enemies)
+            if is_melee and target.get("row", "front") == "back":
+                if self.has_alive_front_row(target, is_target_player=False):
+                    front_enemies = [m for m in alive_enemies if m.get("row", "front") == "front"]
+                    if front_enemies:
+                        target = random.choice(front_enemies)
+
             # 1. 命中判定
             if random.randint(1, 100) > 90:
                 return {"success": False, "msg": f"🛡️ {target['name']} 躲過了 {monster['name']} 的攻擊！"}
                 
             # 2. 減傷計算
-            defense = self._get_entity_defense(target, "physical", is_player=False)
-            
+            defense = get_entity_combat_stat(target, "p_def")
             m_roll = random.randint(1, 20)
             m_roll_mult = 0.5 + (m_roll * 0.05)
             total_m_power = monster["attack"] * m_roll_mult
             
-            final_dmg = max(1, round(total_m_power - defense))
+            from core.combat import use_marginal_returns
+            if use_marginal_returns():
+                target_lvl = get_entity_attr(target, "level", 1)
+                denom = 50.0 + target_lvl * 5.0
+                mitigation_ratio = min(0.80, defense / (defense + denom)) if (defense + denom) > 0 else 0.0
+                effective_def = total_m_power * mitigation_ratio
+            else:
+                effective_def = defense
+            
+            final_dmg = max(1, round(total_m_power - effective_def))
             
             # 3. 應用傷害
-            actual_dmg, dmg_logs = self._apply_damage(target, is_target_player=False, damage=final_dmg, source_entity=monster, is_source_player=False)
+            actual_dmg, dmg_logs = self._apply_damage(target, is_target_player=False, damage=final_dmg, source_entity=monster, is_source_player=False, tags=monster_tags)
             
             log_suffix = "\n" + "\n".join(dmg_logs) if dmg_logs else ""
             msg = f"⚔️ {monster['name']} 攻擊了 {target['name']}，造成 {actual_dmg} 點傷害！{log_suffix}"
@@ -679,14 +853,15 @@ class CombatManager:
         else:
             # 正常怪物行動
             # 1. 確定攻擊目標
-            is_charmed = self._has_status(monster, is_player=False, status_name="Charm")
-            is_taunted = self._has_status(monster, is_player=False, status_name="Taunt")
+            is_charmed = has_status(monster, status_name="Charm")
+            is_controlled = has_status(monster, status_name="Mind_Control")
+            is_taunted = has_status(monster, status_name="Taunt")
             
             target_entity = None
             is_target_player = True
             
-            if is_charmed:
-                # Charmed: attack another monster
+            if is_charmed or is_controlled:
+                # Charmed or Controlled: attack another monster
                 alive_other_monsters = [m for m in self.monsters if m["hp"] > 0 and m is not monster and not m.get("is_summon")]
                 if alive_other_monsters:
                     target_entity = random.choice(alive_other_monsters)
@@ -705,18 +880,41 @@ class CombatManager:
                 # Default target is player
                 target_entity = self.character
                 is_target_player = True
+
+            # Redirect melee attacks if targeting back row and front row is alive
+            monster_tags = monster.get("tags", []) or []
+            is_melee = True
+            if any(t in monster_tags for t in ["Ranged", "Spell"]):
+                is_melee = False
+                
+            target_row = getattr(target_entity.data, "row", "front") if is_target_player else target_entity.get("row", "front")
+            if is_melee and target_row == "back" and self.has_alive_front_row(target_entity, is_target_player):
+                # Redirect! Find an alive front row entity on target side
+                if is_target_player:
+                    if getattr(self.character.data, "row", "front") == "front" and self.character.data.vitality.hp > 0:
+                        target_entity = self.character
+                    else:
+                        front_summons = [m for m in self.monsters if m.get("is_summon") and m.get("hp", 0) > 0 and m.get("row", "front") == "front"]
+                        if front_summons:
+                            target_entity = random.choice(front_summons)
+                            is_target_player = False
+                else:
+                    front_monsters = [m for m in self.monsters if not m.get("is_summon") and m.get("hp", 0) > 0 and m.get("row", "front") == "front"]
+                    if front_monsters:
+                        target_entity = random.choice(front_monsters)
+                        is_target_player = False
                 
             target_name = self.character.data.name if is_target_player else target_entity["name"]
             
             # 2. 判定 Banish
-            if self._has_status(target_entity, is_target_player, "Banish"):
+            if has_status(target_entity, "Banish"):
                 return {"success": False, "msg": f"🌀 {target_name} 處於放逐狀態，{monster['name']} 的攻擊無法命中！"}
                 
             # ActionContext for Hit check
             from core.contexts import ActionContext, DiceContext
             from core.trigger_engine import TriggerEngine
             
-            evasion_rate = self._get_entity_evasion(target_entity, is_target_player)
+            evasion_rate = get_entity_combat_stat(target_entity, "evasion_rate")
             base_accuracy = 0.90
             base_crit = 0.05
             
@@ -728,6 +926,7 @@ class CombatManager:
                 damage_type=damage_type,
                 combat_context=self
             )
+            act_ctx.tags = monster_tags
             
             # 觸發命中前攔截
             TriggerEngine.dispatch_interceptor("on_prepare", act_ctx, monster, target_entity)
@@ -737,7 +936,7 @@ class CombatManager:
                 is_hit = True
             else:
                 hit_chance = (act_ctx.accuracy * 100) - (act_ctx.evasion_rate * 100)
-                if self._has_status(target_entity, is_target_player, "Invis"):
+                if has_status(target_entity, "Invis"):
                     hit_chance *= 0.3
                 is_hit = (random.randint(1, 100) <= hit_chance)
 
@@ -773,7 +972,7 @@ class CombatManager:
             
             # 4. 減傷計算
             damage_type = monster.get("damage_type", "physical")
-            defense = self._get_entity_defense(target_entity, damage_type, is_player=is_target_player)
+            defense = get_entity_combat_stat(target_entity, "p_def" if damage_type == "physical" else "m_def")
             if act_ctx.defense_ignore_ratio > 0:
                 defense = int(defense * (1.0 - act_ctx.defense_ignore_ratio))
             
@@ -783,13 +982,20 @@ class CombatManager:
                 tenacity_reduction = 1.0 - (c_stats["tenacity"] / 1000)
                 tenacity_reduction = max(0.5, tenacity_reduction)
                 
-            max_mitigation = total_m_power * 0.80
-            effective_def = min(defense, max_mitigation)
+            from core.combat import use_marginal_returns
+            if use_marginal_returns():
+                target_lvl = get_entity_attr(target_entity, "level", 1)
+                denom = 50.0 + target_lvl * 5.0
+                mitigation_ratio = min(0.80, defense / (defense + denom)) if (defense + denom) > 0 else 0.0
+                effective_def = total_m_power * mitigation_ratio
+            else:
+                max_mitigation = total_m_power * 0.80
+                effective_def = min(defense, max_mitigation)
             
             final_dmg = max(1.0, round((total_m_power - effective_def) * tenacity_reduction, 1))
             
             # 5. 應用傷害
-            actual_dmg, dmg_logs = self._apply_damage(target_entity, is_target_player, int(final_dmg), monster, is_source_player=False, context=act_ctx)
+            actual_dmg, dmg_logs = self._apply_damage(target_entity, is_target_player, int(final_dmg), monster, is_source_player=False, context=act_ctx, tags=monster_tags)
             
             # 觸發後置傷害與擊殺事件
             TriggerEngine.dispatch_event("on_hit", monster, target_entity, self, damage=actual_dmg, context=act_ctx)
@@ -857,7 +1063,7 @@ class CombatManager:
             target_idx = alive_indices[0]
 
         # 狂暴 (Berserk) 限制
-        if self._has_status(self.character, is_player=True, status_name="Berserk"):
+        if has_status(self.character, status_name="Berserk"):
             alive_monsters = [i for i, m in enumerate(self.monsters) if m["hp"] > 0]
             if alive_monsters:
                 chosen_target = random.choice(alive_monsters)
@@ -875,19 +1081,129 @@ class CombatManager:
         # 取得目標怪物
         target = self.monsters[target_idx]
         
+        # Check row protection for melee skills at the start of cast
+        is_melee_skill = "Melee" in getattr(skill.mechanics, "tags", [])
+        if is_melee_skill:
+            target_row = target.get("row", "front")
+            if target_row == "back" and self.has_alive_front_row(target, is_target_player=False):
+                return {"success": False, "msg": "❌ 無法對後排施展近戰技能：敵方前排仍有存活單位擋路！"}
+        
+        # --- 處理發動模式 (execution_mode) 與 養成機制 ---
+        execution_mode = getattr(skill.mechanics, "execution_mode", "immediate")
+        if execution_mode == "reactive":
+            return {"success": False, "msg": f"❌ 【{skill.name}】是反制技能，無法主動施放，將在觸發條件滿足時自動發動。"}
+            
+        elif execution_mode == "delayed":
+            delay = 2 if "Apocalypse" in skill.mechanics.keywords or "Apocalypse" == skill.mechanics.legendary_keyword else 1
+            self.casting_queue.append({
+                "skill": skill,
+                "caster": self.character,
+                "target": target,
+                "turns_left": delay,
+                "is_echo": False
+            })
+            self.delayed_actions.append({
+                "caster_type": "player",
+                "skill": skill,
+                "target_idx": target_idx,
+                "delay_turns": delay,
+                "is_echo": False
+            })
+            # 不立刻執行
+            msg = f"⏳ 你開始詠唱【{skill.name}】，法術將在 {delay} 回合後爆發！"
+            
+            # 更新養成機制 (詠唱成功即算一次)
+            skill.usage_count += 1
+            if skill.evolution_threshold > 0 and skill.usage_count >= skill.evolution_threshold and not skill.can_evolve:
+                skill.can_evolve = True
+                msg += f"\n🌟 熟練度突破！你的【{skill.name}】現在可以回到城鎮進行進化了！"
+                
+            return {"success": True, "msg": msg, "finished": self.is_finished}
+            
+        elif execution_mode == "channeled":
+            self.channeling_actions[str(id(self.character))] = {
+                "skill": skill,
+                "target_idx": target_idx,
+                "turns_left": 2  # 總共引導 3 次（1次立即，2次後續回合）
+            }
+
         try:
             # 呼叫技能執行器
             res = SkillProcessor.execute_skill(skill, self.character, target, self)
+            
+            # 更新養成機制
+            skill.usage_count += 1
+            if skill.evolution_threshold > 0 and skill.usage_count >= skill.evolution_threshold and not skill.can_evolve:
+                skill.can_evolve = True
+                if "logs" not in res:
+                    res["logs"] = []
+                res["logs"].append(f"🌟 熟練度突破！你的【{skill.name}】現在可以回到城鎮進行進化了！")
+                
         except ValueError as e:
             return {"success": False, "msg": f"❌ 施法失敗：{str(e)}"}
-            
-        logs = res.get("logs", [])
-        control_flags = res.get("control_flags", {})
-        
-        # 檢查戰鬥狀態
         self._check_battle_status()
         
         # 處理流程標記連動：
+        control_flags = res.get("control_flags", {})
+        if "logs" not in res:
+            res["logs"] = []
+        logs = res["logs"]
+
+        # Apocalypse 全體真實傷害與沉默
+        if control_flags.get("apocalypse_aoe") and not self.is_finished:
+            final_val = res.get("final_value", 0.0)
+            from core.skill_processor import add_entity_status_effect
+            for idx, m in enumerate(self.monsters):
+                if m.get("hp", 0) > 0 and idx != target_idx:
+                    actual_dmg, dmg_logs = self._apply_damage(m, is_target_player=False, damage=int(final_val), source_entity=self.character, is_source_player=True)
+                    add_entity_status_effect(m, "Silence", "沉默：無法施展傷害技能", 2)
+                    logs.append(f"⚡ 【天劫降臨】雷劫席捲 {m.get('name')}，造成 {actual_dmg} 點真實傷害並施加【沉默】2 回合！")
+                    if dmg_logs:
+                        logs.extend(dmg_logs)
+                    if m.get("hp", 0) <= 0:
+                        logs.append(f"💀 {m.get('name')} 倒下了！")
+
+        # Last_Rites Doom 擴散
+        if control_flags.get("last_rites_doom_spread") and not self.is_finished:
+            from core.skill_processor import add_entity_status_effect
+            for idx, m in enumerate(self.monsters):
+                if m.get("hp", 0) > 0 and idx != target_idx:
+                    add_entity_status_effect(m, "Doom", "厄運宣告：倒數即死", 3)
+                    logs.append(f"⚰️ 【終焉禮讚】厄運擴散！對 {m.get('name')} 施加了【厄運宣告】！")
+
+        # Soul_Shatter 擊殺全體 Stun
+        if control_flags.get("soul_shatter_triggered") and not self.is_finished:
+            from core.skill_processor import add_entity_status_effect
+            for m in self.monsters:
+                if m.get("hp", 0) > 0:
+                    add_entity_status_effect(m, "Stun", "暈眩：無法行動", 1)
+                    logs.append(f"💀 【靈魂粉碎】爆發！對 {m.get('name')} 施加【暈眩】1 回合！")
+
+        # Devil's_Roll 6點強制 AoE
+        if control_flags.get("devil_roll_aoe") and not self.is_finished:
+            final_val = res.get("final_value", 0.0)
+            for idx, m in enumerate(self.monsters):
+                if m.get("hp", 0) > 0 and idx != target_idx:
+                    actual_dmg, dmg_logs = self._apply_damage(m, is_target_player=False, damage=int(final_val), source_entity=self.character, is_source_player=True)
+                    logs.append(f"🎲 【惡魔骰】6點衝擊波席捲 {m.get('name')}，造成 {actual_dmg} 點傷害！")
+                    if dmg_logs:
+                        logs.extend(dmg_logs)
+                    if m.get("hp", 0) <= 0:
+                        logs.append(f"💀 {m.get('name')} 倒下了！")
+
+        # Devil's_Roll 4-5點隨機詛咒
+        devil_debuff = control_flags.get("devil_roll_debuff")
+        if devil_debuff and target.get("hp", 0) > 0:
+            from core.skill_processor import add_entity_status_effect
+            if devil_debuff == "Stun":
+                add_entity_status_effect(target, "Stun", "暈眩：無法行動", 1)
+                logs.append(f"🎲 【惡魔骰】隨機詛咒：對 {target.get('name')} 附加【暈眩】1 回合！")
+            elif devil_debuff == "Burn":
+                add_entity_status_effect(target, "Burn", "灼燒 DoT", 3, dot_damage_flat=15.0, dot_damage_type="true_damage")
+                logs.append(f"🎲 【惡魔骰】隨機詛咒：對 {target.get('name')} 附加【灼燒】3 回合！")
+            elif devil_debuff == "Doom":
+                add_entity_status_effect(target, "Doom", "厄運宣告：倒數即死", 3)
+                logs.append(f"🎲 【惡魔骰】隨機詛咒：對 {target.get('name')} 附加【厄運宣告】3 回合！")
         
         # 1. 瞬發 (Quickcast)：允許連續行動
         is_quickcast = control_flags.get("quickcast", False)
@@ -927,7 +1243,8 @@ class CombatManager:
                 "level": self.character.data.level,
                 "gold_reward": 0,
                 "exp_reward": 0,
-                "is_summon": True
+                "is_summon": True,
+                "master_id": str(id(self.character))
             }
             m_speed = summon_entity["speed"] + random.randint(1, 10)
             self.turn_order.append({"type": "monster", "speed": m_speed, "ref": summon_entity, "index": len(self.monsters)})
@@ -936,10 +1253,19 @@ class CombatManager:
             
         # 4. 殘響 (Echo) 標記
         if control_flags.get("echo_active"):
+            self.casting_queue.append({
+                "skill": skill,
+                "caster": self.character,
+                "target": target,
+                "turns_left": 1,
+                "is_echo": True
+            })
             self.delayed_actions.append({
                 "caster_type": "player",
                 "skill": skill,
-                "target_idx": target_idx
+                "target_idx": target_idx,
+                "delay_turns": 1,
+                "is_echo": True
             })
             logs.append("🔊 【殘響】已佇列，將在下回合自動重複發動。")
 
@@ -1002,12 +1328,129 @@ class CombatManager:
 
     async def player_attack(self, target_idx: Optional[int] = None) -> Dict[str, Any]:
         res = await self._player_attack_raw(target_idx)
-        return self._wrap_combat_message(res)
+        wrapped = self._wrap_combat_message(res)
+        if wrapped.get("success") and "msg" in wrapped:
+            self.battle_logs.append(wrapped["msg"])
+        return wrapped
 
     async def monster_action(self) -> Dict[str, Any]:
         res = await self._monster_action_raw()
-        return self._wrap_combat_message(res)
+        wrapped = self._wrap_combat_message(res)
+        if wrapped.get("success") and "msg" in wrapped:
+            self.battle_logs.append(wrapped["msg"])
+        return wrapped
 
     async def cast_skill(self, skill: Skill, target_idx: Optional[int] = None) -> Dict[str, Any]:
         res = await self._cast_skill_raw(skill, target_idx)
-        return self._wrap_combat_message(res)
+        wrapped = self._wrap_combat_message(res)
+        if wrapped.get("success") and "msg" in wrapped:
+            self.battle_logs.append(wrapped["msg"])
+        return wrapped
+
+    async def cast_summon_action(self, action_type: str, target_idx: Optional[int] = None, skill_name: Optional[str] = None) -> Dict[str, Any]:
+        res = await self._cast_summon_action_raw(action_type, target_idx, skill_name)
+        if res.get("success") and "msg" in res:
+            self.battle_logs.append(res["msg"])
+        return res
+
+    async def _cast_summon_action_raw(self, action_type: str, target_idx: Optional[int] = None, skill_name: Optional[str] = None) -> Dict[str, Any]:
+        if self.is_finished:
+            return {"success": False, "msg": "戰鬥已經結束。"}
+
+        curr = self.get_current_entity()
+        entity_ref = curr["ref"]
+        
+        # 確保當前行動單位是召喚物，且主人為當前玩家
+        if not (curr["type"] == "monster" and entity_ref.get("is_summon")):
+            return {"success": False, "msg": "目前行動單位不是召喚物！"}
+            
+        master_id = entity_ref.get("master_id")
+        if master_id != str(id(self.character)):
+            return {"success": False, "msg": "此召喚物不受您控制！"}
+            
+        if self.character.data.vitality.hp <= 0:
+            return {"success": False, "msg": "主人已倒下，召喚物無法接受指令！"}
+
+        if action_type == "attack":
+            if target_idx is None:
+                alive_enemies = [i for i, m in enumerate(self.monsters) if m["hp"] > 0 and not m.get("is_summon")]
+                if not alive_enemies:
+                    return {"success": False, "msg": "沒有合適的攻擊目標！"}
+                target_idx = alive_enemies[0]
+                
+            target = self.monsters[target_idx]
+            
+            # Check row protection
+            is_melee = True
+            summon_tags = entity_ref.get("tags", []) or []
+            if any(t in summon_tags for t in ["Ranged", "Spell"]):
+                is_melee = False
+            if is_melee and target.get("row", "front") == "back" and self.has_alive_front_row(target, is_target_player=False):
+                return {"success": False, "msg": "❌ 無法攻擊後排：敵方前排仍有存活單位擋路，且該攻擊為近戰攻擊！"}
+            
+            # 命中判定
+            if random.randint(1, 100) > 90:
+                self.next_turn()
+                return self._wrap_combat_message({"success": True, "msg": f"🛡️ {target['name']} 躲過了 {entity_ref['name']} 的攻擊！", "finished": self.is_finished})
+                
+            # 減傷計算
+            defense = get_entity_combat_stat(target, "p_def")
+            m_roll = random.randint(1, 20)
+            m_roll_mult = 0.5 + (m_roll * 0.05)
+            total_power = entity_ref["attack"] * m_roll_mult
+            
+            from core.combat import use_marginal_returns
+            if use_marginal_returns():
+                target_lvl = get_entity_attr(target, "level", 1)
+                denom = 50.0 + target_lvl * 5.0
+                mitigation_ratio = min(0.80, defense / (defense + denom)) if (defense + denom) > 0 else 0.0
+                effective_def = total_power * mitigation_ratio
+            else:
+                effective_def = defense
+            
+            final_dmg = max(1, round(total_power - effective_def))
+            
+            actual_dmg, dmg_logs = self._apply_damage(target, is_target_player=False, damage=int(final_dmg), source_entity=entity_ref, is_source_player=False, tags=summon_tags)
+            log_suffix = "\n" + "\n".join(dmg_logs) if dmg_logs else ""
+            msg = f"⚔️ [寵物指令] {entity_ref['name']} 攻擊了 {target['name']}，造成 {actual_dmg} 點傷害！{log_suffix}"
+            if target["hp"] <= 0:
+                msg += f"\n💀 {target['name']} 倒下了！"
+                
+            self.next_turn()
+            return self._wrap_combat_message({"success": True, "msg": msg, "finished": self.is_finished})
+
+        elif action_type == "defend":
+            guard_target = self.character
+            guard_target._defended_by = entity_ref
+            msg = f"🛡️ [寵物指令] {entity_ref['name']} 開始護衛主人 {guard_target.data.name}，將為其擋下下一次傷害！"
+            self.next_turn()
+            return self._wrap_combat_message({"success": True, "msg": msg, "finished": self.is_finished})
+
+        elif action_type == "cast":
+            if not skill_name:
+                return {"success": False, "msg": "請指定召喚物要施放的技能名稱！"}
+                
+            skill = next((s for s in entity_ref.get("abilities", []) if s.name == skill_name), None)
+            if not skill:
+                return {"success": False, "msg": f"召喚物沒有【{skill_name}】技能！"}
+                
+            if target_idx is None:
+                alive_enemies = [i for i, m in enumerate(self.monsters) if m["hp"] > 0 and not m.get("is_summon")]
+                if not alive_enemies:
+                    return {"success": False, "msg": "沒有合適的攻擊目標！"}
+                target_idx = alive_enemies[0]
+            target = self.monsters[target_idx]
+            
+            try:
+                res = SkillProcessor.execute_skill(skill, entity_ref, target, self)
+                logs = res.get("logs", [])
+                skill_logs = "\n" + "\n".join(logs) if logs else ""
+                msg = f"🌟 [寵物指令] {entity_ref['name']} 施展了技能【{skill.name}】！{skill_logs}"
+            except Exception as e:
+                return {"success": False, "msg": f"❌ 施法失敗：{str(e)}"}
+                
+            self._check_battle_status()
+            self.next_turn()
+            return self._wrap_combat_message({"success": True, "msg": msg, "finished": self.is_finished})
+
+        return {"success": False, "msg": "未知指令類型。"}

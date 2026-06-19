@@ -2,27 +2,15 @@ import random
 import re
 from typing import Any, List, Dict, Optional
 from core.contexts import ActionContext, DiceContext
-from core.skill_processor import (
+from core.combat_utils import (
     get_entity_stat,
     get_entity_attr,
     set_entity_attr,
-    add_entity_status_effect
+    add_entity_status_effect,
+    has_status,
+    remove_status
 )
 
-def entity_has_status(entity: Any, status_name: str) -> bool:
-    if not entity:
-        return False
-    if hasattr(entity, "data") and hasattr(entity.data, "status_effects"):
-        return any(e.name == status_name for e in entity.data.status_effects)
-    elif isinstance(entity, dict) and "status_effects" in entity:
-        for effect in entity["status_effects"]:
-            if isinstance(effect, dict):
-                if effect.get("name") == status_name:
-                    return True
-            else:
-                if getattr(effect, "name", None) == status_name:
-                    return True
-    return False
 
 def evaluate_condition(condition_str: Optional[str], entity: Any, context: Optional[Any] = None, target: Optional[Any] = None) -> bool:
     if not condition_str:
@@ -47,13 +35,13 @@ def _evaluate_single_condition(condition_str: str, entity: Any, context: Optiona
     match = re.match(r"has_status\(['\"](.+?)['\"]\)", cond)
     if match:
         status_name = match.group(1)
-        has_it = entity_has_status(entity, status_name)
+        has_it = has_status(entity, status_name)
         return not has_it if is_negated else has_it
 
     match_target_status = re.match(r"target_has_status\(['\"](.+?)['\"]\)", cond)
     if match_target_status:
         status_name = match_target_status.group(1)
-        has_it = entity_has_status(target, status_name) if target else False
+        has_it = has_status(target, status_name) if target else False
         return not has_it if is_negated else has_it
 
     match_dmg_type = re.match(r"damage_type\(['\"](.+?)['\"]\)", cond)
@@ -71,13 +59,15 @@ def _evaluate_single_condition(condition_str: str, entity: Any, context: Optiona
         op = match_stacks.group(2)
         val = int(match_stacks.group(3))
         
+        from core.constants import normalize_status_name
+        norm_query = normalize_status_name(status_name)
         curr_stacks = 0
         if hasattr(entity, "data") and hasattr(entity.data, "status_effects") and entity.data.status_effects is not None:
-            effect = next((e for e in entity.data.status_effects if e.name == status_name), None)
+            effect = next((e for e in entity.data.status_effects if normalize_status_name(e.name) == norm_query), None)
             if effect:
                 curr_stacks = getattr(effect, "stacks", 1)
         elif isinstance(entity, dict) and "status_effects" in entity:
-            effect = next((e for e in entity["status_effects"] if (e.name == status_name if hasattr(e, "name") else e.get("name") == status_name)), None)
+            effect = next((e for e in entity["status_effects"] if (normalize_status_name(e.name) == norm_query if hasattr(e, "name") else normalize_status_name(e.get("name")) == norm_query)), None)
             if effect:
                 curr_stacks = getattr(effect, "stacks", 1) if hasattr(effect, "stacks") else effect.get("stacks", 1)
                 
@@ -170,6 +160,37 @@ def _evaluate_single_condition(condition_str: str, entity: Any, context: Optiona
         max_san = get_entity_attr(entity, "max_sanity", 100)
         has_below = (curr_san / max_san * 100) <= pct if max_san > 0 else False
         return not has_below if is_negated else has_below
+    # Skill and Row checks
+    match_skill_tag = re.match(r"skill_has_tag\(['\"](.+?)['\"]\)", cond)
+    if match_skill_tag:
+        tag_name = match_skill_tag.group(1)
+        has_tag = False
+        if context:
+            if hasattr(context, "skill") and context.skill is not None:
+                has_tag = tag_name in getattr(context.skill.mechanics, "tags", [])
+            elif hasattr(context, "mechanics"):
+                has_tag = tag_name in getattr(context.mechanics, "tags", [])
+            elif isinstance(context, dict) and "skill" in context:
+                sk = context["skill"]
+                if hasattr(sk, "mechanics"):
+                    has_tag = tag_name in getattr(sk.mechanics, "tags", [])
+                elif isinstance(sk, dict) and "mechanics" in sk:
+                    has_tag = tag_name in sk["mechanics"].get("tags", [])
+        return not has_tag if is_negated else has_tag
+
+    match_row = re.match(r"row\(['\"](.+?)['\"]\)", cond)
+    if match_row:
+        expected_row = match_row.group(1)
+        actual_row = get_entity_attr(entity, "row", "front")
+        is_match = (actual_row == expected_row)
+        return not is_match if is_negated else is_match
+
+    match_target_row = re.match(r"target_row\(['\"](.+?)['\"]\)", cond)
+    if match_target_row:
+        expected_row = match_target_row.group(1)
+        actual_row = get_entity_attr(target, "row", "front") if target else "front"
+        is_match = (actual_row == expected_row)
+        return not is_match if is_negated else is_match
         
     return True
 
@@ -239,6 +260,61 @@ def resolve_action_target(action_target_str: str, owner: Any, event_target: Opti
                 return [m for m in combat_manager.monsters if m.get("hp", 0) > 0 and not m.get("is_summon")]
             return [owner] if owner else []
             
+    if action_target_str == "lowest_hp" and combat_manager:
+        if is_owner_player:
+            enemies = [m for m in combat_manager.monsters if m.get("hp", 0) > 0 and not m.get("is_summon")]
+        else:
+            enemies = [combat_manager.character] if combat_manager.character and get_entity_attr(combat_manager.character, "hp") > 0 else []
+        if enemies:
+            lowest = min(enemies, key=lambda e: get_entity_attr(e, "hp", 100) / get_entity_attr(e, "max_hp", 100) if get_entity_attr(e, "max_hp", 100) > 0 else 1.0)
+            return [lowest]
+        return []
+
+    if action_target_str == "lowest_hp_ally" and combat_manager:
+        if is_owner_player:
+            allies = [owner] if owner else []
+            summons = [m for m in combat_manager.monsters if m.get("hp", 0) > 0 and m.get("is_summon")]
+            allies.extend(summons)
+        else:
+            allies = [m for m in combat_manager.monsters if m.get("hp", 0) > 0 and not m.get("is_summon")]
+            if owner and owner not in allies:
+                allies.append(owner)
+        if allies:
+            lowest = min(allies, key=lambda e: get_entity_attr(e, "hp", 100) / get_entity_attr(e, "max_hp", 100) if get_entity_attr(e, "max_hp", 100) > 0 else 1.0)
+            return [lowest]
+        return []
+
+    if action_target_str == "highest_atk" and combat_manager:
+        if is_owner_player:
+            enemies = [m for m in combat_manager.monsters if m.get("hp", 0) > 0 and not m.get("is_summon")]
+        else:
+            enemies = [combat_manager.character] if combat_manager.character and get_entity_attr(combat_manager.character, "hp") > 0 else []
+        if enemies:
+            from core.combat_utils import get_entity_stat
+            highest = max(enemies, key=lambda e: max(get_entity_stat(e, "STR"), get_entity_attr(e, "attack", 0)))
+            return [highest]
+        return []
+
+    if action_target_str == "row_front" and combat_manager:
+        if is_owner_player:
+            enemies = [m for m in combat_manager.monsters if m.get("hp", 0) > 0 and not m.get("is_summon")]
+        else:
+            enemies = [combat_manager.character] if combat_manager.character and get_entity_attr(combat_manager.character, "hp") > 0 else []
+        front_row = [e for e in enemies if get_entity_attr(e, "row", "front") == "front"]
+        if front_row:
+            return front_row
+        return enemies
+
+    if action_target_str == "row_back" and combat_manager:
+        if is_owner_player:
+            enemies = [m for m in combat_manager.monsters if m.get("hp", 0) > 0 and not m.get("is_summon")]
+        else:
+            enemies = [combat_manager.character] if combat_manager.character and get_entity_attr(combat_manager.character, "hp") > 0 else []
+        back_row = [e for e in enemies if get_entity_attr(e, "row", "front") == "back"]
+        if back_row:
+            return back_row
+        return enemies
+
     return [event_target] if event_target else []
 
 class TriggerEngine:
@@ -310,7 +386,12 @@ class TriggerEngine:
             for skill in entity.data.abilities:
                 skill_triggers = getattr(skill, "executable_triggers", None)
                 if skill_triggers and isinstance(skill_triggers, list):
-                    triggers.extend(skill_triggers)
+                    for t in skill_triggers:
+                        if isinstance(t, dict):
+                            t_copy = dict(t)
+                            t_copy["_owner_skill"] = skill
+                            t_copy["_orig_trigger"] = t
+                            triggers.append(t_copy)
         elif isinstance(entity, dict) and "abilities" in entity:
             for skill in entity["abilities"]:
                 if isinstance(skill, dict):
@@ -318,7 +399,12 @@ class TriggerEngine:
                 else:
                     skill_triggers = getattr(skill, "executable_triggers", None)
                 if skill_triggers and isinstance(skill_triggers, list):
-                    triggers.extend(skill_triggers)
+                    for t in skill_triggers:
+                        if isinstance(t, dict):
+                            t_copy = dict(t)
+                            t_copy["_owner_skill"] = skill
+                            t_copy["_orig_trigger"] = t
+                            triggers.append(t_copy)
 
         # 4. 讀取實體本身的直接觸發器 (例如怪物自帶詞條，或技能自帶觸發)
         if isinstance(entity, dict):
@@ -469,6 +555,34 @@ class TriggerEngine:
                 # 用 helper 函式進行目標血量百分比條件過濾
                 if not TriggerEngine._check_target_health_filters(trigger, target):
                     continue
+                    
+                # 扣除技能觸發資源消耗
+                if "_owner_skill" in trigger:
+                    skill = trigger["_owner_skill"]
+                    costs = getattr(skill.mechanics, "cost", {}) or {}
+                    mp_cost = costs.get("MP", 0)
+                    stamina_cost = costs.get("STAMINA", 0)
+                    san_cost = costs.get("SAN", 0)
+                    
+                    # 檢查資源是否足夠
+                    curr_mp = get_entity_attr(caster, "mp", 0)
+                    curr_stamina = get_entity_attr(caster, "stamina", 0)
+                    curr_san = get_entity_attr(caster, "sanity", 0)
+                    
+                    if curr_mp < mp_cost or curr_stamina < stamina_cost or curr_san < san_cost:
+                        msg = f"⚠️ {TriggerEngine._get_name(caster)} 想要發動反制技能【{skill.name}】，但資源不足！(需要 MP:{mp_cost}/STAMINA:{stamina_cost})"
+                        if combat_manager:
+                            combat_manager.battle_logs.append(msg)
+                        continue
+                        
+                    # 扣除資源
+                    set_entity_attr(caster, "mp", max(0, curr_mp - mp_cost))
+                    set_entity_attr(caster, "stamina", max(0, curr_stamina - stamina_cost))
+                    set_entity_attr(caster, "sanity", max(0, curr_san - san_cost))
+                    
+                    msg = f"⚡ {TriggerEngine._get_name(caster)} 消耗 {mp_cost} MP / {stamina_cost} 精力，發動反制技能【{skill.name}】！"
+                    if combat_manager:
+                        combat_manager.battle_logs.append(msg)
                 
                 # Branching logic: If the trigger specifies a dice_roll, we roll it first.
                 trigger_dice_val = None
@@ -650,6 +764,8 @@ class TriggerEngine:
                             status_bonuses = action.get("bonuses", {})
                             max_stacks = action.get("max_stacks", 5)
                             trigger_limit = action.get("trigger_limit", 0)
+                            custom_status_name = action.get("custom_status_name")
+                            canonical_status = action.get("canonical_status")
                             # --- DoT 欄位：施加時以施加者屬性計算最終值存入 ---
                             dot_flat = float(action.get("dot_damage_flat", 0.0))
                             dot_stat = action.get("dot_scaling_stat")
@@ -671,6 +787,8 @@ class TriggerEngine:
                                     dot_scaling_stat=None,   # 已解算，不再存 stat
                                     dot_multiplier=0.0,
                                     dot_damage_type=dot_dtype,
+                                    custom_status_name=custom_status_name,
+                                    canonical_status=canonical_status,
                                 )
                                 target_name = TriggerEngine._get_name(action_target)
                                 log_msg = f"✨ 觸發效果：施加狀態【{status_name}】給 {target_name}，持續 {duration} 回合。"
@@ -682,8 +800,7 @@ class TriggerEngine:
                         elif action_type == "remove_status":
                             status_name = action.get("status_name")
                             if status_name:
-                                from core.skill_processor import SkillExecutionPipeline
-                                SkillExecutionPipeline._remove_status(action_target, status_name)
+                                remove_status(action_target, status_name)
                                 target_name = TriggerEngine._get_name(action_target)
                                 log_msg = f"✨ 觸發效果：清除了 {target_name} 身上的狀態【{status_name}】。"
                                 if combat_manager:
@@ -693,10 +810,9 @@ class TriggerEngine:
 
                         elif action_type == "purge_debuffs":
                             debuffs = ["Stun", "Silence", "Root", "Slow", "Burn", "Frostbite", "Blind", "Doom", "Charm", "Confusion", "Sunder", "Taunt"]
-                            from core.skill_processor import SkillExecutionPipeline
                             for debuff in debuffs:
-                                if entity_has_status(action_target, debuff):
-                                    SkillExecutionPipeline._remove_status(action_target, debuff)
+                                if has_status(action_target, debuff):
+                                    remove_status(action_target, debuff)
                             target_name = TriggerEngine._get_name(action_target)
                             log_msg = f"✨ 觸發效果：清除了 {target_name} 身上的所有負面狀態！"
                             if combat_manager:

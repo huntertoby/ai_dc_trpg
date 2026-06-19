@@ -39,6 +39,11 @@ async def process_monster_turns_workflow(combat_manager) -> Dict[str, Any]:
     
     while not combat_manager.is_finished:
         curr = combat_manager.get_current_entity()
+        # 如果是玩家的召喚物，且主人存活，暫停自動循環，由玩家進行手動控制
+        is_player_summon = curr["type"] == "monster" and curr["ref"].get("is_summon") and curr["ref"].get("master_id") == str(id(combat_manager.character))
+        if is_player_summon and combat_manager.character.data.vitality.hp > 0:
+            break
+            
         if curr["type"] != "monster":
             break  # 輪到玩家了，停止自動循環
             

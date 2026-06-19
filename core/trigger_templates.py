@@ -47,7 +47,9 @@ def _clean(val: Any, default: Any) -> Any:
 def _dot_fields(debuff_name: str, dot_flat: float, dot_stat: Optional[str],
                 dot_mult: float, dot_type: str) -> dict:
     """為 DoT 減益組裝必要欄位。若非 DoT 類型則回傳空 dict。"""
-    if debuff_name in DOT_DEBUFFS:
+    from core.constants import normalize_status_name
+    norm_name = normalize_status_name(debuff_name)
+    if norm_name in DOT_DEBUFFS:
         d: dict = {"dot_damage_flat": float(dot_flat)}
         if dot_stat:
             d["dot_scaling_stat"] = dot_stat

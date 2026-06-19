@@ -184,3 +184,6 @@ cython_debug/
 # Ignore all files in area_db, but keep 0,0.json
 /area_db/*
 !/area_db/0,0.json
+
+# Scratch files
+/scratch/

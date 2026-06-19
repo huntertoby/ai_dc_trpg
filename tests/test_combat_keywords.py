@@ -3,6 +3,7 @@ from unittest.mock import MagicMock, patch
 import random
 
 from core.combat import CombatManager
+from core.combat_utils import get_entity_combat_stat, has_status
 from core.models import CharacterSchema, Equipment, Vitality, PrimaryAttributes, EquipmentSlots, Skill, SkillMechanics, SkillFormula, StatusEffect
 from core.character import Character
 
@@ -87,7 +88,7 @@ class TestCombatKeywords(unittest.IsolatedAsyncioTestCase):
         )
         
         # 測試 _get_entity_defense 取得防禦是否正確減少
-        defense = cm._get_entity_defense(monster, "physical", is_player=False)
+        defense = get_entity_combat_stat(monster, "p_def")
         self.assertEqual(defense, 7) # 10 - 3 = 7
 
         # 測試玩家普攻傷害是否隨之增加
@@ -213,7 +214,7 @@ class TestCombatKeywords(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(self.monsters[0]["hp"], 96) # 怪物遭到 4 點反彈傷害
             
             # 驗證 Reflect 狀態被消耗移除
-            self.assertFalse(cm._has_status(self.mock_char, is_player=True, status_name="Reflect"))
+            self.assertFalse(has_status(self.mock_char, "Reflect"))
 
     async def test_invis_hit_rate_reduction(self):
         """驗證玩家 Invis 隱身狀態下，怪物普通攻擊命中率劇減"""
@@ -457,7 +458,7 @@ class TestCombatKeywords(unittest.IsolatedAsyncioTestCase):
         self.monsters[0]["status_effects"].append(StatusEffect(name="Slow", duration=3, bonuses={"DEX": -99}))
         
         # 檢測怪物迴避率是否正確降為 0
-        evasion = cm._get_entity_evasion(self.monsters[0], is_player=False)
+        evasion = get_entity_combat_stat(self.monsters[0], "evasion_rate")
         self.assertEqual(evasion, 0.0)
  
         # 玩家獲得減速狀態，使戰鬥面板中的 DEX 極低
@@ -465,7 +466,7 @@ class TestCombatKeywords(unittest.IsolatedAsyncioTestCase):
         # 模擬戰鬥屬性。由於 character 的 combat_stats 沒有重新加載，我們直接驗證 _get_entity_evasion 對玩家的保護
         # 故意給玩家 combat_stats 塞一個負數迴避
         self.mock_char.combat_stats["evasion_rate"] = -0.5
-        evasion_p = cm._get_entity_evasion(self.mock_char, is_player=True)
+        evasion_p = get_entity_combat_stat(self.mock_char, "evasion_rate")
         self.assertEqual(evasion_p, 0.0) # 應夾持為 0.0 以上
 
 if __name__ == "__main__":

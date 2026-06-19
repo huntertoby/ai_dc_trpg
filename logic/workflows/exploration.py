@@ -121,3 +121,49 @@ async def hunt_workflow(character: Character, area: AreaSchema, llm_client) -> D
         return {"success": True, "monsters": m_group}
     except Exception as e:
         return {"success": False, "reason": "error", "message": f"❌ 生成怪物失敗: {e}"}
+
+async def explore_landmark_workflow(character: Character, area: AreaSchema, building: BuildingSchema, user_id: str, llm_client) -> Dict[str, Any]:
+    """
+    處理地標探索邏輯。扣體力、呼叫 LLM 生成針對該地標的特殊奇遇事件，並存檔。
+    """
+    COST = 10
+    if character.data.vitality.stamina < COST:
+        return {"success": False, "reason": "stamina", "message": "❌ 體力不足。"}
+    
+    character.data.vitality.stamina -= COST
+    character.save()
+    
+    p = character.data.personality
+    char_traits = f"背景：{character.data.background}\n信仰：{p.belief} | 缺點：{p.flaw} | 恐懼：{p.fear}"
+    char_status = f"{character.data.job_name}(Lv.{character.data.level})"
+    hp_pct = (character.data.vitality.hp / character.data.vitality.max_hp) * 100
+    health_desc = "受傷嚴重" if hp_pct < 30 else ("略顯疲態" if hp_pct < 70 else "狀態良好")
+    
+    landmark_info = f"地標名稱：{building.name}\n地標描述：{building.description}"
+    area_info = f"位於區域：{area.name} ({area.type})\n區域描述：{area.description}\n生態標籤：{', '.join(area.ecology_tags)}"
+    
+    sys_prompt = f"""
+    你是一個充滿想像力的 TRPG GM。
+    
+    【地標環境】
+    {landmark_info}
+    {area_info}
+    
+    【角色資訊】
+    角色：{character.data.name} ({char_status})
+    狀態：{health_desc}
+    特質：{char_traits}
+    
+    請根據以上資訊生成一個即時發生在該「地標內部」或「地標周圍」的「特殊探索事件」或「奇遇挑戰」。
+    要求：
+    1. 敘事風格要有代入感，必須高度契合該地標的名稱、特徵與視覺描述，並融入該區域的生態特色。
+    2. **特別注意**：嘗試將角色的背景、恐懼或缺點融入事件中，讓事件對該角色具有個人意義。
+    3. 字數控制在 100 字以內。
+    4. 只輸出故事敘事，不要有 GM 的開場白（如「好的，...」）。
+    """
+    
+    try:
+        txt = await llm_client.call("生成地標探索事件", sys_prompt)
+        return {"success": True, "event_text": txt}
+    except Exception as e:
+        return {"success": False, "reason": "error", "message": f"❌ 錯誤: {e}"}

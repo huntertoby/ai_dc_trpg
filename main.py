@@ -1,4 +1,14 @@
 import asyncio
+import sys
+
+# Configure console output to support UTF-8 on Windows
+if sys.platform.startswith('win'):
+    try:
+        sys.stdout.reconfigure(encoding='utf-8')
+        sys.stderr.reconfigure(encoding='utf-8')
+    except AttributeError:
+        pass
+
 import discord
 import utils.discord_patches
 from discord.ext import commands
@@ -262,9 +272,27 @@ async def debug_equipment(
         await interaction.followup.send("❌ 裝備生成失敗。", ephemeral=True)
         return
 
+    info_parts = [f"**[{eq.tier}] Lv.{eq.item_level} {eq.slot_type}**"]
+    weapon_info = []
+    if getattr(eq, 'weapon_type', None) and eq.weapon_type:
+        weapon_info.append(f"🗡️ {eq.weapon_type}")
+    if eq.slot_type in ['main_hand', 'off_hand']:
+        dmg_type_map = {"physical": "物理", "magical": "魔法"}
+        scaling_map = {"STR": "力量", "DEX": "敏捷", "CON": "體質", "INT": "智力", "WIS": "感知", "CHA": "魅力"}
+        weapon_info.append(dmg_type_map.get(eq.damage_type, eq.damage_type))
+        weapon_info.append(f"主屬:{scaling_map.get(eq.scaling_stat, eq.scaling_stat)}")
+        if eq.is_two_handed:
+            weapon_info.append("⚔️雙手")
+    if weapon_info:
+        info_parts.append(" | ".join(weapon_info))
+    
+    if getattr(eq, 'tags', None) and eq.tags:
+        tag_str = ' '.join([f"`{t}`" for t in eq.tags])
+        info_parts.append(f"🏷️ 標籤: {tag_str}")
+
     embed = discord.Embed(
         title=f"🛠️ 測試裝備：{eq.name}",
-        description=f"**[{eq.tier}] Lv.{eq.item_level} {eq.slot_type}**\n\n*{eq.description}*",
+        description="\n".join(info_parts) + f"\n\n*{eq.description}*",
         color=EquipmentBalancer.get_tier_color(eq.tier)
     )
     stats_text = ""
@@ -334,7 +362,57 @@ async def debug_skill(
         description=f"**[{skill.tier}]**\n{skill.description}",
         color=discord.Color.red()
     )
-    embed.add_field(name="⚙️ 機制", value=f"**消耗**: {m.cost}\n**公式**: {m.formula.base_stat}", inline=False)
+    
+    # 翻譯普通關鍵字
+    translated_kws = [KEYWORD_TRANSLATIONS.get(kw, kw) for kw in m.keywords]
+    kws_str = ", ".join(translated_kws) if translated_kws else "無"
+
+    # 翻譯傳說詞條
+    legendary_text = ""
+    if getattr(m, "legendary_keyword", None):
+        from core.constants import LEGENDARY_KEYWORD_TRANSLATIONS
+        trans_legendary = LEGENDARY_KEYWORD_TRANSLATIONS.get(m.legendary_keyword, m.legendary_keyword)
+        legendary_text = f"\n**傳說詞條**: 🌟 `{m.legendary_keyword}` ({trans_legendary})"
+
+    # 格式化公式描述
+    formula_desc = f"{m.formula.base_stat} * ({m.formula.dice} / {m.formula.divisor})" if m.formula.type == "multiplier" else f"{m.formula.base_stat} + {m.formula.dice}"
+    
+    # 拼圖系統額外資訊
+    puzzle_text = ""
+    if getattr(m, "targeting_modifier", None):
+        puzzle_text += f"\n**範圍變化**: `{m.targeting_modifier}`"
+    if getattr(m, "synergy_requirement", None):
+        puzzle_text += f"\n**共鳴需求**: `{m.synergy_requirement}`"
+    if getattr(m, "execution_mode", "immediate") != "immediate":
+        puzzle_text += f"\n**發動模式**: `{m.execution_mode}`"
+        
+    # 養成系統額外資訊
+    evolution_text = ""
+    if getattr(skill, "evolution_threshold", 0) > 0:
+        evolution_text += f"\n**進化門檻**: {skill.evolution_threshold} 次施放 (可成長)"
+        
+    # 標籤系統
+    tags_text = ""
+    if getattr(m, "tags", None) and m.tags:
+        tag_str = ' '.join([f"`{t}`" for t in m.tags])
+        tags_text = f"\n**標籤**: {tag_str}"
+
+    embed.add_field(
+        name="⚙️ 機制", 
+        value=(
+            f"**類型**: {m.action_type} ({m.target_type})\n"
+            f"**消耗**: {m.cost}\n"
+            f"**公式**: {formula_desc}\n"
+            f"**普通關鍵字**: {kws_str}"
+            f"{legendary_text}"
+            f"{puzzle_text}"
+            f"{evolution_text}"
+            f"{tags_text}"
+        ), 
+        inline=False
+    )
+    if m.narrative_effect:
+        embed.add_field(name="✨ 敘事特效", value=m.narrative_effect, inline=False)
     if skill.executable_triggers:
         import json
         triggers_json = json.dumps(skill.executable_triggers, indent=2, ensure_ascii=False)

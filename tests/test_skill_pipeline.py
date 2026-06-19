@@ -22,40 +22,61 @@ class TestSkillPipelineAndGenerator(unittest.TestCase):
         
         # 第一次回傳包含衝突 (Invis + Taunt) 的 JSON，第二次回傳合法的 JSON
         response_conflict = {
-            "name": "影嘲術",
-            "description": "又隱身又嘲諷",
-            "tier": "T2",
+            "skill_type": "active",
+            "bonuses": None,
             "action_type": "buff",
             "target_type": "self",
-            "cost": {"MP": 50},
-            "formula": {"type": "multiplier", "base_stat": "WIS", "dice": "1d20", "divisor": 8.0},
-            "keywords": ["Invis", "Taunt"],
-            "custom_logic": "",
-            "narrative_effect": "影嘲！"
+            "base_stat": "WIS",
+            "is_magical": True,
+            "template_choices": [
+                {"template_id": "active_invis"},
+                {"template_id": "active_taunt"}
+            ],
+            "targeting_modifier": None,
+            "synergy_requirement": None,
+            "execution_mode": "immediate",
+            "cost_preference": "standard",
+            "evolution_threshold": None,
+            "tags": ["Shadow"],
+            "reactive_trigger": None,
+            "allowed_jobs": ["暗殺者", "盜賊"]
         }
         
         response_clean = {
-            "name": "影遁術",
-            "description": "純粹隱身",
-            "tier": "T2",
+            "skill_type": "active",
+            "bonuses": None,
             "action_type": "buff",
             "target_type": "self",
-            "cost": {"MP": 50},
-            "formula": {"type": "multiplier", "base_stat": "WIS", "dice": "1d20", "divisor": 8.0},
-            "keywords": ["Invis"],
-            "custom_logic": "",
-            "narrative_effect": "影遁！"
+            "base_stat": "WIS",
+            "is_magical": True,
+            "template_choices": [
+                {"template_id": "active_invis"}
+            ],
+            "targeting_modifier": None,
+            "synergy_requirement": None,
+            "execution_mode": "immediate",
+            "cost_preference": "standard",
+            "evolution_threshold": None,
+            "tags": ["Shadow"],
+            "reactive_trigger": None,
+            "allowed_jobs": ["暗殺者", "盜賊"]
+        }
+
+        response_stage2 = {
+            "name": "影遁術",
+            "description": "純粹隱身",
+            "narrative_effect": "暗影隱身，持續 2 回合。"
         }
         
         llm_client.call = AsyncMock()
-        llm_client.call.side_effect = ["conflict_raw_text", "clean_raw_text"]
+        llm_client.call.side_effect = ["conflict_raw_text", "clean_raw_text", "stage2_raw_text"]
         
-        mock_repair.side_effect = [response_conflict, response_clean]
+        mock_repair.side_effect = [response_conflict, response_clean, response_stage2]
         
-        skill = await generate_single_skill("想隱身", "T2", llm_client)
+        skill = await generate_single_skill("想隱身", "T2", llm_client, kw_count=1)
         
-        # 驗證是否呼叫了兩次 LLM，且最後成功返回無衝突的技能
-        self.assertEqual(llm_client.call.call_count, 2)
+        # 驗證是否呼叫了三次 LLM (Stage 1 衝突, Stage 1 乾淨, Stage 2)，且最後成功返回無衝突的技能
+        self.assertEqual(llm_client.call.call_count, 3)
         self.assertIsNotNone(skill)
         self.assertEqual(skill.name, "影遁術")
         self.assertEqual(skill.mechanics.keywords, ["Invis"])
@@ -100,8 +121,8 @@ class TestSkillPipelineAndGenerator(unittest.TestCase):
         with patch("core.skill_processor.SkillProcessor.roll_dice", return_value=10):
             res = SkillProcessor.execute_skill(skill_sac, caster, target)
             self.assertTrue(res["logs"])
-            # 扣除當前 HP(100) 的 10% = 10 HP
-            self.assertEqual(caster.data.vitality.hp, 90)
+            # 扣除當前 HP(100) 的 20% = 20 HP
+            self.assertEqual(caster.data.vitality.hp, 80)
             
         # 2. 測試 Sacrifice (犧牲) 與 Lifesteal (吸血) 協同運作 (吸血會回復 HP)
         skill_both = Skill(
@@ -384,3 +405,83 @@ class TestSkillPipelineAndGenerator(unittest.TestCase):
         
         # Verify that the executed result reflects the copied mechanics
         self.assertIn("Burn", res["keywords"])
+
+    def test_new_skill_generator_features(self):
+        # 1. 測試物理與魔法消耗類型路由 (Stamina vs MP)
+        from core.skill_generator import calculate_skill_cost
+        
+        # 魔法技能 -> 消耗 MP
+        cost_magical = calculate_skill_cost(
+            tier="T3", target_type="single", is_magical=True,
+            template_choices=[], cost_pref="standard", description="魔法火球"
+        )
+        self.assertIn("MP", cost_magical)
+        self.assertNotIn("STAMINA", cost_magical)
+        
+        # 物理技能 -> 消耗 STAMINA
+        cost_physical = calculate_skill_cost(
+            tier="T3", target_type="single", is_magical=False,
+            template_choices=[], cost_pref="standard", description="物理斬擊"
+        )
+        self.assertIn("STAMINA", cost_physical)
+        self.assertNotIn("MP", cost_physical)
+        
+        # 無消耗偏好
+        cost_zero = calculate_skill_cost(
+            tier="T3", target_type="single", is_magical=True,
+            template_choices=[], cost_pref="zero", description="無消耗"
+        )
+        self.assertEqual(cost_zero, {})
+
+        # 2. 測試 assemble_skill_actions 的 Tier & Intensity 數值縮放
+        from core.skill_templates import assemble_skill_actions
+        
+        # T3 Standard Shield
+        actions_t3_std = assemble_skill_actions([{"template_id": "active_shield", "intensity": "standard"}], tier="T3")
+        shield_t3_std = actions_t3_std[0]["flat_value"]
+        
+        # T1 Extreme Shield (should be much higher)
+        actions_t1_ext = assemble_skill_actions([{"template_id": "active_shield", "intensity": "extreme"}], tier="T1")
+        shield_t1_ext = actions_t1_ext[0]["flat_value"]
+        
+        self.assertGreater(shield_t1_ext, shield_t3_std)
+        
+        # 3. 測試 Pydantic 載入時動態註冊自訂狀態別名
+        from core.constants import STATUS_REGISTRY, normalize_status_name
+        from core.models import Skill
+        
+        # 建立帶有 custom_status_name 與 canonical_status 的技能數據
+        skill_json = {
+            "name": "地獄黑炎",
+            "description": "召喚極致黑火",
+            "tier": "T2",
+            "mechanics": {
+                "action_type": "damage",
+                "target_type": "single",
+                "cost": {"MP": 20},
+                "formula": {"type": "multiplier", "base_stat": "INT", "dice": "1d10", "divisor": 8.0},
+                "actions": [
+                    {
+                        "action_type": "apply_status",
+                        "target": "target",
+                        "status_name": "地獄黑焰",
+                        "duration": 3,
+                        "custom_status_name": "地獄黑焰",
+                        "canonical_status": "Burn"
+                    }
+                ]
+            }
+        }
+        
+        # 驗證在反序列化前，"地獄黑焰" 還不是 "Burn" 的別名
+        if "地獄黑焰" in STATUS_REGISTRY["Burn"]["aliases"]:
+            STATUS_REGISTRY["Burn"]["aliases"].remove("地獄黑焰")
+            
+        self.assertNotEqual(normalize_status_name("地獄黑焰"), "Burn")
+        
+        # 使用 Pydantic 反序列化實例化模型
+        loaded_skill = Skill.model_validate(skill_json)
+        
+        # 驗證別名已成功自動註冊回 STATUS_REGISTRY，且 normalize_status_name 能成功標準化
+        self.assertIn("地獄黑焰", STATUS_REGISTRY["Burn"]["aliases"])
+        self.assertEqual(normalize_status_name("地獄黑焰"), "Burn")

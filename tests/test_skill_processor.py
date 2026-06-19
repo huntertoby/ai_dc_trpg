@@ -26,8 +26,8 @@ class TestSkillProcessor(unittest.TestCase):
         self.assertEqual(SkillProcessor.roll_dice("invalid"), 0)
 
     def test_validate_and_clamp_skill_single_hand(self):
-        # Tier T5: min divisor = 12.0
-        # If original divisor is 10.0, it should be clamped to 12.0
+        # Tier T5: min divisor = 15.0
+        # If original divisor is 10.0, it should be clamped to 15.0
         skill = Skill(
             name="火球", description="召喚小火球", tier="T5",
             mechanics=SkillMechanics(
@@ -36,11 +36,11 @@ class TestSkillProcessor(unittest.TestCase):
             )
         )
         clamped = SkillProcessor.validate_and_clamp_skill(skill)
-        self.assertEqual(clamped.mechanics.formula.divisor, 12.0)
+        self.assertEqual(clamped.mechanics.formula.divisor, 15.0)
 
     def test_validate_and_clamp_skill_aoe_tax(self):
-        # Tier T4: min divisor = 10.0
-        # If target_type is aoe, it gets 1.5x tax -> min divisor becomes 15.0
+        # Tier T4: min divisor = 12.0
+        # If target_type is aoe, it gets 1.5x tax -> min divisor becomes 18.0
         skill = Skill(
             name="烈焰雨", description="火焰降臨", tier="T4",
             mechanics=SkillMechanics(
@@ -49,7 +49,7 @@ class TestSkillProcessor(unittest.TestCase):
             )
         )
         clamped = SkillProcessor.validate_and_clamp_skill(skill)
-        self.assertEqual(clamped.mechanics.formula.divisor, 15.0)
+        self.assertEqual(clamped.mechanics.formula.divisor, 18.0)
 
     def test_calculate_base_value_multiplier(self):
         # Stat * (Dice / Divisor)
@@ -179,3 +179,55 @@ class TestSkillProcessor(unittest.TestCase):
             log_text_heal = breakdown_log_heal[0]
             self.assertIn("10 (公式: 1d20)", log_text_heal)
             self.assertIn("(感知:15 * (10/10.0)) = 15.0", log_text_heal)
+
+    def test_execute_skill_detonate(self):
+        from core.models import StatusEffect
+        skill_detonate = Skill(
+            name="引爆擊", description="引爆目標狀態", tier="T2",
+            mechanics=SkillMechanics(
+                action_type="damage", target_type="single", cost={"MP": 5},
+                formula=SkillFormula(type="multiplier", base_stat="INT", dice="1d10", divisor=10.0),
+                actions=[
+                    {"action_type": "call_special_mechanic", "keyword_name": "Detonate", "target": "target", "status_name": "Burn", "flat_value": 30.0}
+                ]
+            )
+        )
+        
+        char = MagicMock()
+        char.data = CharacterSchema(
+            character_id="test_char_123", name="卡爾", background="孤兒",
+            primary_stats=PrimaryAttributes(STR=5, DEX=5, CON=5, INT=15, WIS=5, CHA=5),
+            vitality=Vitality(hp=100, max_hp=100, mp=20, max_mp=20, stamina=100, max_stamina=100, sanity=100, max_sanity=100),
+            inventory=[], status_effects=[], equipment_slots=EquipmentSlots()
+        )
+        char.total_stats = {"INT": 15}
+        
+        target = MagicMock()
+        burn_effect = StatusEffect(name="Burn", duration=3, dot_damage_flat=15.0)
+        target.data = CharacterSchema(
+            character_id="test_target_456", name="木人樁", background="無",
+            primary_stats=PrimaryAttributes(STR=5, DEX=5, CON=5, INT=5, WIS=5, CHA=5),
+            vitality=Vitality(hp=100, max_hp=100, mp=20, max_mp=20, stamina=100, max_stamina=100, sanity=100, max_sanity=100),
+            inventory=[], status_effects=[burn_effect], equipment_slots=EquipmentSlots()
+        )
+        target.combat_stats = {"p_def": 0, "m_def": 0, "crit_rate": 0.0, "evasion_rate": 0.0, "accuracy": 1.0, "skill_power": 1.0}
+        
+        with patch("core.skill_processor.SkillProcessor.roll_dice", return_value=10), \
+             patch("random.random", return_value=0.5):
+            # Verify the target initially has Burn
+            self.assertEqual(len(target.data.status_effects), 1)
+            self.assertEqual(target.data.status_effects[0].name, "Burn")
+            
+            res = SkillProcessor.execute_skill(skill_detonate, char, target)
+            self.assertTrue(res["success"])
+            
+            # The burn status should be consumed (removed)
+            self.assertEqual(len(target.data.status_effects), 0)
+            
+            # Damage calculation:
+            # Base damage = 15 * (10 / 10.0) = 15.0
+            # Min defense is 1.0, so base dmg after def = 14.0
+            # Detonate bonus = 30.0
+            # Total damage = 14.0 + 30.0 = 44.0
+            self.assertEqual(res["final_value"], 44.0)
+            self.assertTrue(any("觸發【引爆】" in l for l in res["logs"]))

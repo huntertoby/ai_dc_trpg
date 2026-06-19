@@ -394,6 +394,11 @@ class TriggerCompiler:
                 "duration": duration,
                 "bonuses": bonuses,
             }
+            if act.get("custom_status_name"):
+                entry["custom_status_name"] = act.get("custom_status_name")
+            if act.get("canonical_status"):
+                entry["canonical_status"] = act.get("canonical_status")
+
             if dot_flat > 0 or (dot_stat and dot_mult > 0):
                 entry["dot_damage_flat"] = dot_flat
                 entry["dot_scaling_stat"] = dot_stat

@@ -2,6 +2,7 @@ import unittest
 from unittest.mock import MagicMock, patch
 from core.combat import CombatManager
 from core.models import CharacterSchema, Vitality, PrimaryAttributes, EquipmentSlots, Equipment, StatusEffect
+from core.combat_utils import has_status
 from core.compiler import TriggerCompiler
 from core.trigger_engine import TriggerEngine
 
@@ -203,8 +204,7 @@ class TestDiceBranchingAndFlexibleShield(unittest.IsolatedAsyncioTestCase):
             cm = CombatManager(self.char, self.monsters)
             
             # Caster should have "狂暴" status
-            has_status = any(e.name == "狂暴" for e in self.char.data.status_effects)
-            self.assertTrue(has_status)
+            self.assertTrue(has_status(self.char, "狂暴"))
             # Caster HP should still be 100
             self.assertEqual(self.char.data.vitality.hp, 100)
 
@@ -216,8 +216,7 @@ class TestDiceBranchingAndFlexibleShield(unittest.IsolatedAsyncioTestCase):
             cm = CombatManager(self.char, self.monsters)
             
             # Caster should NOT have "狂暴" status
-            has_status = any(e.name == "狂暴" for e in self.char.data.status_effects)
-            self.assertFalse(has_status)
+            self.assertFalse(has_status(self.char, "狂暴"))
             # Caster should have taken 10 damage -> HP = 90
             self.assertEqual(self.char.data.vitality.hp, 90)
 

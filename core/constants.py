@@ -20,6 +20,8 @@ RANK_COLORS = {
     "S": 0xf1c40f  # 金色
 }
 
+VALID_TAGS = ["Fire", "Cold", "Shadow", "Lightning", "Holy", "Dark", "Wind", "Earth", "Water", "Nature", "Poison", "Acid", "Arcane", "Physical", "Chaos", "Melee", "Ranged", "Spell", "Summon", "Defense", "Gamble"]
+
 STAMINA_RESTORE_COST = 1000  # 體力額外恢復費用 (大量金幣)
 
 # 武器類型定義：類別 -> 主屬性 (scaling_stat)
@@ -50,7 +52,7 @@ BASE_JOBS = [
 
 SKILL_KEYWORDS = [
     # 攻擊類
-    "Pierce", "Execute", "Lifesteal", "Chain", "Multi-hit", "Sacrifice", "Sunder", "Burn",
+    "Pierce", "Execute", "Lifesteal", "Chain", "Multi-hit", "Sacrifice", "Sunder", "Burn", "Detonate",
     # 防禦輔助類
     "Reflect", "Shield", "Immune", "Taunt", "Purge", "Bless", "Invis",
     # 控場時空類
@@ -69,7 +71,7 @@ SKILL_KEYWORDS = [
 
 KEYWORD_TRANSLATIONS = {
     "Pierce": "穿透", "Execute": "處決", "Lifesteal": "吸血", "Chain": "連鎖", 
-    "Multi-hit": "多重打擊", "Sacrifice": "犧牲", "Sunder": "破甲", "Burn": "灼燒",
+    "Multi-hit": "多重打擊", "Sacrifice": "犧牲", "Sunder": "破甲", "Burn": "灼燒", "Detonate": "引爆",
     "Reflect": "反射", "Shield": "護盾", "Immune": "免疫", "Taunt": "嘲諷", 
     "Purge": "淨化", "Bless": "祝福", "Invis": "隱身",
     "Stun": "暈眩", "Silence": "沉默", "Root": "定身", "Slow": "減速", 
@@ -81,7 +83,38 @@ KEYWORD_TRANSLATIONS = {
     "Blind": "盲目", "Terrain_Trap": "地形陷阱", "Levitate": "浮空", "Wall_Break": "碎垣", "Counter_Stance": "反擊架勢",
     "Mana_Burn": "燃魔", "Overload": "超載", "Stat_Swap": "屬性反轉", "Soul_Link": "靈魂連結",
     "Doom": "厄運宣告", "Vampiric_Aura": "吸血光環", "Resurrect": "復甦", "Martyr": "殉道", "Frostbite": "凍傷",
-    "Combo_Starter": "連擊起手", "Combo_Finisher": "連擊終結", "Rampage": "殺戮盛宴", "Adapt": "適應", "Mimicry": "擬態"
+    "Combo_Starter": "連擊起手", "Combo_Finisher": "連擊終結", "Rampage": "殺戮盛宴", "Adapt": "適應", "Mimicry": "擬態",
+    "Focus": "專注", "Siphon": "屬性汲取", "Bleed": "流血", "Ward": "魔防護盾", "Desperation": "絕境怒火", "Fade": "仇恨消退",
+    "Phoenix_Rebirth": "涅槃重燃", "Fate_Swap": "因果互換", "Mind_Control": "心靈傀儡", "Apocalypse": "天劫降臨"
+}
+
+# 傳說技能專屬詞條
+LEGENDARY_KEYWORDS = [
+    "Annihilate", "Soul_Drain", "Doom_Seal", "Blood_Pact", "Epoch_Break",
+    "Void_Rift", "Last_Rites", "Paradox", "Eternal_Wound", "Abyssal_Mark",
+    "Resonance_Break", "Soul_Shatter", "Fate_Seal", "Devil's_Roll",
+    "Phoenix_Rebirth", "Fate_Swap", "Mind_Control", "Apocalypse"
+]
+
+LEGENDARY_KEYWORD_TRANSLATIONS = {
+    "Annihilate": "虛滅",
+    "Soul_Drain": "靈魂汲取",
+    "Doom_Seal": "厄印強化",
+    "Blood_Pact": "血誓契約",
+    "Epoch_Break": "時代終結",
+    "Void_Rift": "虛空裂隙",
+    "Last_Rites": "終焉禮讚",
+    "Paradox": "矛盾法則",
+    "Eternal_Wound": "永恆創傷",
+    "Abyssal_Mark": "深淵印記",
+    "Resonance_Break": "共鳴破碎",
+    "Soul_Shatter": "靈魂粉碎",
+    "Fate_Seal": "命運封印",
+    "Devil's_Roll": "惡魔骰",
+    "Phoenix_Rebirth": "涅槃重燃",
+    "Fate_Swap": "因果互換",
+    "Mind_Control": "心靈傀儡",
+    "Apocalypse": "天劫降臨"
 }
 
 BASE_RACES = [
@@ -146,3 +179,366 @@ EQUIPMENT_KEYWORDS = {
         "description": "與疾風、迴避、隱身、行動點骰子修正相關的主題"
     }
 }
+
+# --- 統一狀態效果註冊表 (Status Effect Registry) ---
+STATUS_REGISTRY = {
+    # 控制與負面狀態 (Debuffs)
+    "Stun": {
+        "canonical_name": "Stun",
+        "aliases": ["stun", "暈眩", "眩暈", "昏迷", "Stunned"],
+        "is_debuff": True,
+        "emoji": "🌀",
+        "translation": "暈眩"
+    },
+    "Silence": {
+        "canonical_name": "Silence",
+        "aliases": ["silence", "沉默", "禁言", "Silenced"],
+        "is_debuff": True,
+        "emoji": "🤐",
+        "translation": "沉默"
+    },
+    "Root": {
+        "canonical_name": "Root",
+        "aliases": ["root", "定身", "纏繞", "Rooted"],
+        "is_debuff": True,
+        "emoji": "🕸️",
+        "translation": "定身"
+    },
+    "Slow": {
+        "canonical_name": "Slow",
+        "aliases": ["slow", "減速", "緩速", "Slowed"],
+        "is_debuff": True,
+        "emoji": "🐢",
+        "translation": "減速"
+    },
+    "Blind": {
+        "canonical_name": "Blind",
+        "aliases": ["blind", "盲目", "失明", "Blindness"],
+        "is_debuff": True,
+        "emoji": "🕶️",
+        "translation": "盲目"
+    },
+    "Charm": {
+        "canonical_name": "Charm",
+        "aliases": ["charm", "魅惑", "誘惑", "Charmed"],
+        "is_debuff": True,
+        "emoji": "💖",
+        "translation": "魅惑"
+    },
+    "Confusion": {
+        "canonical_name": "Confusion",
+        "aliases": ["confusion", "混亂", "Confused"],
+        "is_debuff": True,
+        "emoji": "🌀",
+        "translation": "混亂"
+    },
+    "Berserk": {
+        "canonical_name": "Berserk",
+        "aliases": ["berserk", "狂暴", "狂怒", "Berserked"],
+        "is_debuff": True,
+        "emoji": "🩸",
+        "translation": "狂暴"
+    },
+    "Mind_Control": {
+        "canonical_name": "Mind_Control",
+        "aliases": ["mind_control", "心靈傀儡", "精神控制", "心靈控制"],
+        "is_debuff": True,
+        "emoji": "🧠",
+        "translation": "心靈傀儡"
+    },
+    "Banish": {
+        "canonical_name": "Banish",
+        "aliases": ["banish", "放逐", "虛無", "Banished"],
+        "is_debuff": True,
+        "emoji": "🌀",
+        "translation": "放逐"
+    },
+    
+    # 持續傷害狀態 (DoT Debuffs)
+    "Burn": {
+        "canonical_name": "Burn",
+        "aliases": ["burn", "灼燒", "燃燒", "灼痕刻印", "焚痕刻印"],
+        "is_debuff": True,
+        "emoji": "🔥",
+        "translation": "灼燒"
+    },
+    "Frostbite": {
+        "canonical_name": "Frostbite",
+        "aliases": ["frostbite", "凍傷", "冰凍", "寒霜"],
+        "is_debuff": True,
+        "emoji": "🥶",
+        "translation": "凍傷"
+    },
+    "Bleed": {
+        "canonical_name": "Bleed",
+        "aliases": ["bleed", "流血", "撕裂流血", "撕裂"],
+        "is_debuff": True,
+        "emoji": "🩸",
+        "translation": "流血"
+    },
+    "Poison": {
+        "canonical_name": "Poison",
+        "aliases": ["poison", "中毒", "毒素"],
+        "is_debuff": True,
+        "emoji": "☠️",
+        "translation": "中毒"
+    },
+    "Sunder": {
+        "canonical_name": "Sunder",
+        "aliases": ["sunder", "破甲", "護甲撕裂"],
+        "is_debuff": True,
+        "emoji": "🛡️",
+        "translation": "破甲"
+    },
+    "Siphon_Debuff": {
+        "canonical_name": "Siphon_Debuff",
+        "aliases": ["siphon_debuff", "屬性汲取", "汲取衰弱"],
+        "is_debuff": True,
+        "emoji": "🩸",
+        "translation": "屬性汲取"
+    },
+
+    # 傳說/詛咒與特殊 Debuffs
+    "Doom": {
+        "canonical_name": "Doom",
+        "aliases": ["doom", "厄運宣告", "厄運", "死亡宣告"],
+        "is_debuff": True,
+        "emoji": "💀",
+        "translation": "厄運宣告"
+    },
+    "Doom_Seal": {
+        "canonical_name": "Doom_Seal",
+        "aliases": ["doom_seal", "厄印強化", "厄運印記"],
+        "is_debuff": True,
+        "emoji": "💀",
+        "translation": "厄印強化"
+    },
+    "Void_Rift": {
+        "canonical_name": "Void_Rift",
+        "aliases": ["void_rift", "虛空裂隙"],
+        "is_debuff": True,
+        "emoji": "🌀",
+        "translation": "虛空裂隙"
+    },
+    "Eternal_Wound": {
+        "canonical_name": "Eternal_Wound",
+        "aliases": ["eternal_wound", "永恆創傷"],
+        "is_debuff": True,
+        "emoji": "🩸",
+        "translation": "永恆創傷"
+    },
+    "Abyssal_Mark": {
+        "canonical_name": "Abyssal_Mark",
+        "aliases": ["abyssal_mark", "深淵印記"],
+        "is_debuff": True,
+        "emoji": "💀",
+        "translation": "深淵印記"
+    },
+    "Fate_Seal": {
+        "canonical_name": "Fate_Seal",
+        "aliases": ["fate_seal", "命運封印"],
+        "is_debuff": True,
+        "emoji": "⏳",
+        "translation": "命運封印"
+    },
+    "Soul_Exhaustion": {
+        "canonical_name": "Soul_Exhaustion",
+        "aliases": ["soul_exhaustion", "靈魂汲取", "魂能枯竭"],
+        "is_debuff": True,
+        "emoji": "💀",
+        "translation": "靈魂汲取"
+    },
+    "Overload_Lock": {
+        "canonical_name": "Overload_Lock",
+        "aliases": ["overload_lock", "超載鎖定", "超載限制"],
+        "is_debuff": True,
+        "emoji": "⚡",
+        "translation": "超載鎖定"
+    },
+
+    # 增益與保護狀態 (Buffs & Shields)
+    "Shield": {
+        "canonical_name": "Shield",
+        "aliases": ["shield", "護盾", "奧術護盾", "防護罩", "聖盾"],
+        "is_debuff": False,
+        "emoji": "🛡️",
+        "translation": "護盾"
+    },
+    "Immune": {
+        "canonical_name": "Immune",
+        "aliases": ["immune", "霸體", "免疫", "狀態免疫"],
+        "is_debuff": False,
+        "emoji": "🛡️",
+        "translation": "免疫"
+    },
+    "Invis": {
+        "canonical_name": "Invis",
+        "aliases": ["invis", "隱身", "潛行", "隱形"],
+        "is_debuff": False,
+        "emoji": "💨",
+        "translation": "隱身"
+    },
+    "Levitate": {
+        "canonical_name": "Levitate",
+        "aliases": ["levitate", "浮空", "重力浮空", "漂浮"],
+        "is_debuff": False,
+        "emoji": "🌀",
+        "translation": "浮空"
+    },
+    "Counter_Stance": {
+        "canonical_name": "Counter_Stance",
+        "aliases": ["counter_stance", "反擊架勢", "反擊架式"],
+        "is_debuff": False,
+        "emoji": "⚔️",
+        "translation": "反擊架勢"
+    },
+    "Bless": {
+        "canonical_name": "Bless",
+        "aliases": ["bless", "祝福", "神聖祝福"],
+        "is_debuff": False,
+        "emoji": "✨",
+        "translation": "祝福"
+    },
+    "Reflect": {
+        "canonical_name": "Reflect",
+        "aliases": ["reflect", "反射", "鏡面反射", "傷害反射"],
+        "is_debuff": False,
+        "emoji": "🛡️",
+        "translation": "反射"
+    },
+    "Taunt": {
+        "canonical_name": "Taunt",
+        "aliases": ["taunt", "嘲諷", "野性嘲諷"],
+        "is_debuff": False,
+        "emoji": "⚠️",
+        "translation": "嘲諷"
+    },
+    "Ward": {
+        "canonical_name": "Ward",
+        "aliases": ["ward", "魔防護盾", "負面抵抗"],
+        "is_debuff": False,
+        "emoji": "🛡️",
+        "translation": "魔防護盾"
+    },
+    "Desperation": {
+        "canonical_name": "Desperation",
+        "aliases": ["desperation", "絕境怒火", "絕境"],
+        "is_debuff": False,
+        "emoji": "🔥",
+        "translation": "絕境怒火"
+    },
+    "Phoenix_Rebirth": {
+        "canonical_name": "Phoenix_Rebirth",
+        "aliases": ["phoenix_rebirth", "涅槃重燃", "鳳凰涅槃", "復活預備"],
+        "is_debuff": False,
+        "emoji": "🔥",
+        "translation": "涅槃重燃"
+    },
+    "Adapt": {
+        "canonical_name": "Adapt",
+        "aliases": ["adapt", "適應", "適應性抗性"],
+        "is_debuff": False,
+        "emoji": "🧬",
+        "translation": "適應"
+    },
+    # --- Resonance Buffs ---
+    "Fire_Resonance": {
+        "canonical_name": "Fire_Resonance",
+        "aliases": ["fire_resonance", "火焰共鳴", "火共鳴"],
+        "is_debuff": False,
+        "emoji": "🔥",
+        "translation": "火焰共鳴"
+    },
+    "Cold_Resonance": {
+        "canonical_name": "Cold_Resonance",
+        "aliases": ["cold_resonance", "冰霜共鳴", "冰共鳴"],
+        "is_debuff": False,
+        "emoji": "🥶",
+        "translation": "冰霜共鳴"
+    },
+    "Shadow_Resonance": {
+        "canonical_name": "Shadow_Resonance",
+        "aliases": ["shadow_resonance", "暗影共鳴", "暗共鳴"],
+        "is_debuff": False,
+        "emoji": "💀",
+        "translation": "暗影共鳴"
+    },
+    "Lightning_Resonance": {
+        "canonical_name": "Lightning_Resonance",
+        "aliases": ["lightning_resonance", "雷電共鳴", "雷共鳴"],
+        "is_debuff": False,
+        "emoji": "⚡",
+        "translation": "雷電共鳴"
+    },
+    "Holy_Resonance": {
+        "canonical_name": "Holy_Resonance",
+        "aliases": ["holy_resonance", "神聖共鳴", "光共鳴"],
+        "is_debuff": False,
+        "emoji": "✨",
+        "translation": "神聖共鳴"
+    },
+    "Melee_Resonance": {
+        "canonical_name": "Melee_Resonance",
+        "aliases": ["melee_resonance", "近戰共鳴"],
+        "is_debuff": False,
+        "emoji": "⚔️",
+        "translation": "近戰共鳴"
+    },
+    "Ranged_Resonance": {
+        "canonical_name": "Ranged_Resonance",
+        "aliases": ["ranged_resonance", "遠程共鳴"],
+        "is_debuff": False,
+        "emoji": "🎯",
+        "translation": "遠程共鳴"
+    },
+    "Spell_Resonance": {
+        "canonical_name": "Spell_Resonance",
+        "aliases": ["spell_resonance", "法術共鳴"],
+        "is_debuff": False,
+        "emoji": "📖",
+        "translation": "法術共鳴"
+    },
+    "Summon_Resonance": {
+        "canonical_name": "Summon_Resonance",
+        "aliases": ["summon_resonance", "召喚共鳴"],
+        "is_debuff": False,
+        "emoji": "🌀",
+        "translation": "召喚共鳴"
+    },
+    "Defense_Resonance": {
+        "canonical_name": "Defense_Resonance",
+        "aliases": ["defense_resonance", "防禦共鳴"],
+        "is_debuff": False,
+        "emoji": "🛡️",
+        "translation": "防禦共鳴"
+    },
+    "Gamble_Resonance": {
+        "canonical_name": "Gamble_Resonance",
+        "aliases": ["gamble_resonance", "豪賭共鳴"],
+        "is_debuff": False,
+        "emoji": "🎲",
+        "translation": "豪賭共鳴"
+    }
+}
+
+def normalize_status_name(name: str) -> str:
+    """
+    將傳入的狀態效果名稱（支持中英文、大小寫變體）標準化為註冊表中的 Canonical Name。
+    若找不到匹配，則將底線/空格分割的部分首字母大寫後回傳（作為自定義狀態的彈性保留）。
+    """
+    if not name:
+        return ""
+    
+    cleaned = name.strip().lower().replace(" ", "_")
+    
+    # 1. 查找註冊表
+    for canonical, info in STATUS_REGISTRY.items():
+        if cleaned == canonical.lower():
+            return canonical
+        for alias in info["aliases"]:
+            if cleaned == alias.strip().lower().replace(" ", "_"):
+                return canonical
+                
+    # 2. 自動底線首字母大寫容錯（例如 phoenix_rebirth -> Phoenix_Rebirth）
+    parts = cleaned.split("_")
+    return "_".join(p.capitalize() for p in parts if p)

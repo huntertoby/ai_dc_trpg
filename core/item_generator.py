@@ -15,6 +15,17 @@
 """
 import asyncio
 from typing import Optional, Literal
+import sys
+import copy
+
+# Configure console output to support UTF-8 on Windows
+if sys.platform.startswith('win'):
+    try:
+        sys.stdout.reconfigure(encoding='utf-8')
+        sys.stderr.reconfigure(encoding='utf-8')
+    except AttributeError:
+        pass
+
 from core.models import Equipment
 from core.equipment import EquipmentBalancer
 from core.compiler import TriggerCompiler
@@ -24,6 +35,7 @@ from core.trigger_templates import (
     build_template_menu,
     assemble_trigger,
 )
+from core.constants import normalize_status_name, STATUS_REGISTRY
 import json
 import re
 
@@ -80,9 +92,25 @@ EQUIPMENT_STAGE1_SCHEMA = {
                         },
                         "required": ["template_id"]
                     }
+                },
+                "tags": {
+                    "type": "array",
+                    "items": {
+                        "type": "string",
+                        "enum": ["Fire", "Cold", "Shadow", "Lightning", "Holy", "Dark", "Wind", "Earth", "Water", "Nature", "Poison", "Acid", "Arcane", "Physical", "Chaos", "Melee", "Ranged", "Spell", "Summon", "Defense", "Gamble"]
+                    },
+                    "minItems": 1,
+                    "maxItems": 1
+                },
+                "allowed_jobs": {
+                    "type": "array",
+                    "items": {
+                        "type": "string",
+                        "enum": ["戰士", "騎士", "狂戰士", "武僧", "暗殺者", "盜賊", "遊俠", "巫師", "術士", "死靈法師", "召喚師", "煉金術師", "元素使", "祭司", "德魯伊", "吟遊詩人", "聖騎士", "馴獸師", "商人", "占星師", "獵魔人", "工匠", "神諭者", "破法者", "暗騎士"]
+                    }
                 }
             },
-            "required": ["is_two_handed", "scaling_stat", "bonuses", "trigger_choices"]
+            "required": ["is_two_handed", "scaling_stat", "bonuses", "trigger_choices", "tags", "allowed_jobs"]
         }
     }
 }
@@ -341,6 +369,8 @@ def _build_stage1_example(tier: str, slot_type: str, budgets: dict) -> str:
     """
     is_weapon = slot_type in ("main_hand", "off_hand")
     primary_stat = "STR" if is_weapon else "CON"
+    tag = "Melee" if is_weapon else "Defense"
+    jobs = ["戰士", "騎士"] if is_weapon else ["戰士", "騎士", "巫師"]
 
     if tier in ("T4", "T5"):
         example = {
@@ -349,6 +379,8 @@ def _build_stage1_example(tier: str, slot_type: str, budgets: dict) -> str:
             "damage_type": "physical",
             "scaling_stat": primary_stat,
             "bonuses": {primary_stat: round(float(budgets["primary"]), 1)},
+            "tags": [tag],
+            "allowed_jobs": jobs,
             "trigger_choices": []
         }
     elif tier == "T3":
@@ -358,6 +390,8 @@ def _build_stage1_example(tier: str, slot_type: str, budgets: dict) -> str:
             "damage_type": "physical",
             "scaling_stat": primary_stat,
             "bonuses": {primary_stat: round(float(budgets["primary"]), 1), "p_def": 5.0},
+            "tags": [tag],
+            "allowed_jobs": jobs,
             "trigger_choices": [
                 {
                     "template_id": "on_damaged_buff",
@@ -375,6 +409,8 @@ def _build_stage1_example(tier: str, slot_type: str, budgets: dict) -> str:
             "damage_type": "physical",
             "scaling_stat": primary_stat,
             "bonuses": {primary_stat: round(float(budgets["primary"]), 1), "crit_rate": 0.06},
+            "tags": [tag],
+            "allowed_jobs": jobs,
             "trigger_choices": [
                 {
                     "template_id": "on_hit_debuff",
@@ -393,6 +429,8 @@ def _build_stage1_example(tier: str, slot_type: str, budgets: dict) -> str:
             "damage_type": "physical",
             "scaling_stat": primary_stat,
             "bonuses": {primary_stat: round(float(budgets["primary"]), 1), "crit_rate": 0.06},
+            "tags": [tag],
+            "allowed_jobs": jobs,
             "trigger_choices": [
                 {
                     "template_id": "on_hit_damage_dot",
@@ -448,6 +486,18 @@ def _assemble_triggers_from_choices(
         # 清理 stat_bonuses（如果有）
         params = dict(choice)
         params.pop("template_id", None)
+
+        # 執行狀態/debuff對照與標準化
+        for field in ["status_name", "debuff_name"]:
+            if field in params and params[field]:
+                raw_status = params[field]
+                norm_status = normalize_status_name(raw_status)
+                if norm_status in STATUS_REGISTRY:
+                    params[field] = norm_status
+                else:
+                    print(f"[Item Gen] Warning: Status/Debuff '{raw_status}' not found in STATUS_REGISTRY. Keeping as-is.")
+                    params[field] = norm_status
+
         sb = params.get("stat_bonuses")
         if sb and isinstance(sb, dict):
             # 判斷是增益還是減益模板（含 debuff_name 的是減益）
@@ -489,6 +539,12 @@ async def generate_equipment_by_ai(
     tier_config = EquipmentBalancer.AFFIX_QUALITY_TIERS.get(tier, {})
     max_triggers = tier_config.get("max_triggers", 0)
 
+    # Dynamically build stage 1 schema with minItems/maxItems based on tier triggers
+    stage1_schema = copy.deepcopy(EQUIPMENT_STAGE1_SCHEMA)
+    trigger_choices_prop = stage1_schema["json_schema"]["schema"]["properties"]["trigger_choices"]
+    trigger_choices_prop["minItems"] = max_triggers
+    trigger_choices_prop["maxItems"] = max_triggers
+
     from core.constants import WEAPON_TYPES
     weapon_list_str = ", ".join(WEAPON_TYPES.keys())
 
@@ -500,7 +556,7 @@ async def generate_equipment_by_ai(
     template_menu = build_template_menu(tier) if max_triggers > 0 else ""
 
     system_prompt_stage1 = f"""你是一個 TRPG 裝備生成助理。你的工作是：
-①分配屬性（bonuses）②從模板清單中選擇觸發器（trigger_choices）③填寫創意參數。
+①分配屬性（bonuses）②從模板清單中選擇觸發器（trigger_choices）③填寫創意參數與職業限制。
 觸發器的完整結構由系統模板保證正確，你只需要填寫數值與名稱即可。
 
 【裝備基本限制】
@@ -510,6 +566,8 @@ async def generate_equipment_by_ai(
 - 附屬性 (bonuses 中的其他欄位): 最多 {affix_slots} 條
   合法鍵: p_def, m_def, crit_rate, evasion_rate, accuracy, skill_power, tenacity, luck
 - scaling_stat: 只能填 STR / DEX / CON / INT / WIS / CHA（大寫）
+- allowed_jobs: 必須挑選 2-3 個最適合穿戴此裝備的基準職業（例如法師法袍限定巫師、術士、元素使，重甲限定戰士、騎士、聖騎士等）
+- tags: 必須且只能挑選 1 個最契合裝備特性的標籤（例如近戰武器選 Melee，遠程選 Ranged，法杖選 Spell 等，不能同時選多個）
 
 【觸發器規範 - {tier}】
 {tier_rules}
@@ -617,7 +675,7 @@ async def generate_equipment_by_ai(
                 prompt=prompt + retry_hint,
                 system_prompt=system_prompt_stage1,
                 temperature=0.2 + (attempt - 1) * 0.05,  # 降低溫度，確保 JSON schema 嚴格合規
-                response_schema=EQUIPMENT_STAGE1_SCHEMA,
+                response_schema=stage1_schema,
                 enable_thinking=False  # 對於結構化任務，關閉 reasoning 確保格式合規
             )
 
@@ -640,6 +698,11 @@ async def generate_equipment_by_ai(
                 parsed_data["scaling_stat"] = stat.upper()
 
             # 2. 建立 Equipment 物件（stage1 schema 沒有 slot_type/tier/name 欄位，手動注入）
+            tags = parsed_data.get("tags", [])
+            if not isinstance(tags, list):
+                tags = [tags] if tags else []
+            tags = [t for t in tags if t][:1]
+
             eq_data = {
                 "name": "未命名",
                 "slot_type": slot_type,
@@ -650,6 +713,8 @@ async def generate_equipment_by_ai(
                 "damage_type": parsed_data.get("damage_type", "physical"),
                 "scaling_stat": parsed_data["scaling_stat"],
                 "bonuses": parsed_data.get("bonuses", {}),
+                "tags": tags,
+                "allowed_jobs": parsed_data.get("allowed_jobs", []),
                 "executable_triggers": [],
             }
 
@@ -762,7 +827,7 @@ async def generate_equipment_by_ai(
         response_stage2_text = await llm_client.call(
             prompt=stage2_prompt,
             system_prompt=system_prompt_stage2,
-            temperature=0.8,  # 提高溫度以增加故事創意，防範複製範例
+            temperature=0.6,  # 提高溫度以增加故事創意，防範複製範例
             response_schema=EQUIPMENT_STAGE2_SCHEMA,
             enable_thinking=True
         )

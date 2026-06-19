@@ -2,7 +2,7 @@ import unittest
 from unittest.mock import MagicMock, patch
 from core.combat import CombatManager
 from core.models import CharacterSchema, Vitality, PrimaryAttributes, EquipmentSlots, StatusEffect, Equipment
-from core.skill_processor import add_entity_status_effect
+from core.combat_utils import add_entity_status_effect
 
 class TestEngineUpgrades(unittest.IsolatedAsyncioTestCase):
     def setUp(self):
